@@ -1,3 +1,8 @@
-from django.shortcuts import render
+# mfms_api/mfi_management/views.py
+from rest_framework import viewsets
+from .models import Microfinance
+from .serializers import MicrofinanceSerializer
 
-# Create your views here.
+class MicrofinanceViewSet(viewsets.ModelViewSet):
+    queryset = Microfinance.objects.all()
+    serializer_class = MicrofinanceSerializer
