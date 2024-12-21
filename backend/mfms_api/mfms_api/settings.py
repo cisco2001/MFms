@@ -27,6 +27,40 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
+# define the tenant model
+
+TENANT_MODEL = 'mfi_management.Microfinance'
+
+# set Database router
+
+DATABASE_ROUTERS = (
+    'django_tenants.routers.TenantSyncRouter',
+)
+
+# Tenant Apps
+
+TENANT_APPS = (
+    'mfi_management',
+    'staff_management',
+    'customer_management',
+    'repayment_management',
+    'notification_management',
+    'loans_management',
+    'branch_management',
+)
+
+# Shared Apps
+
+SHARED_APPS = (
+    'django_tenants',
+    'rest_framework',
+    'django.contrib.contenttypes',
+    'django.contrib.auth',
+    'django.contrib.sessions',
+    'django.contrib.admin',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+)
 
 # Application definition
 
@@ -37,6 +71,13 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django_tenants',
+    'rest_framework',
+    'mfi_management',
+    'staff_management',
+    'loans_management',
+    'branch_management',
+
 ]
 
 MIDDLEWARE = [
@@ -73,12 +114,19 @@ WSGI_APPLICATION = 'mfms_api.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
+# settings.py
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django_tenants.postgresql_backend',
+        'NAME': 'microfinance',
+        'USER': 'admin',
+        'PASSWORD': 'test1234',
+        'HOST': 'localhost',  # or the appropriate host if it's remote
+        'PORT': '5432',  # Default PostgreSQL port
     }
 }
+
 
 
 # Password validation
