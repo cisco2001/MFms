@@ -45,7 +45,4 @@ class Microfinance(TenantMixin):
     kyc_document_file = models.FileField(upload_to='kyc_documents/', null=True, blank=True)
 
     def __str__(self):
-        return self.microfinance_name
-
-    def __str__(self):
-        return self.microfinance_name
+        return self.name
