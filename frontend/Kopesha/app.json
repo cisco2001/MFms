@@ -9,8 +9,7 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "tz.co.kopesha.mfi"
+      "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
@@ -32,7 +31,7 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#003366"
         }
       ]
     ],
@@ -44,8 +43,14 @@
         "origin": false
       },
       "eas": {
-        "projectId": "19a4fc68-cfb6-4a5a-ae00-0eee95b3c474"
+        "projectId": "bd7930d2-54f8-4133-9105-bf77c01d57b1"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/bd7930d2-54f8-4133-9105-bf77c01d57b1"
     }
   }
 }
