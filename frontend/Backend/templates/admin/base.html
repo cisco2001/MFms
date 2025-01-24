@@ -1,0 +1,48 @@
+{% extends "admin/change_list.html" %}
+{% load i18n admin_urls admin_list %}
+
+{% block content %}
+<div class="bg-white shadow-md rounded-lg overflow-hidden">
+    <table class="w-full">
+        <thead class="bg-gray-200">
+            <tr>
+                <th class="px-4 py-2 text-left">ID</th>
+                <th class="px-4 py-2 text-left">Customer</th>
+                <th class="px-4 py-2 text-left">Amount</th>
+                <th class="px-4 py-2 text-left">Status</th>
+                <th class="px-4 py-2 text-left">Created At</th>
+                <th class="px-4 py-2 text-left">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for obj in cl.result_list %}
+            <tr class="border-b hover:bg-gray-100">
+                <td class="px-4 py-2">{{ obj.id }}</td>
+                <td class="px-4 py-2">{{ obj.customer.full_name }}</td>
+                <td class="px-4 py-2">{{ obj.amount_requested }}</td>
+                <td class="px-4 py-2">
+                    <span class="
+                        {% if obj.status == 'APPROVED' %}text-green-600
+                        {% elif obj.status == 'PENDING' %}text-yellow-600
+                        {% elif obj.status == 'REJECTED' %}text-red-600
+                        {% else %}text-gray-600{% endif %}
+                    ">
+                        {{ obj.get_status_display }}
+                    </span>
+                </td>
+                <td class="px-4 py-2">{{ obj.created_at|date:"Y-m-d" }}</td>
+                <td class="px-4 py-2">
+                    <a href="{% url 'admin:dashboard_loanapplication_change' obj.pk %}" 
+                       class="text-blue-600 hover:text-blue-800">Edit</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if not cl.result_list %}
+<div class="text-center py-4 text-gray-500">No loan applications found.</div>
+{% endif %}
+
+{% endblock %}
