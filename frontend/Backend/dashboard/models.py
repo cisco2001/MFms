@@ -5,6 +5,7 @@ from django.db import models
 from django.utils import timezone
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
+from django.core.exceptions import ValidationError
 
 
 class Address(models.Model):
@@ -26,20 +27,22 @@ class Address(models.Model):
 
 
 class LoanOfficerManager(BaseUserManager):
-    def create_user(self, email, password=None, **extra_fields):
+    def create_user(self, email, employee_id, password=None, **extra_fields):
         if not email:
             raise ValueError("Email is required")
+        if not employee_id:
+            raise ValueError("Employee ID is required")
             
         email = self.normalize_email(email)
-        user = self.model(email=email, **extra_fields)
+        user = self.model(email=email, employee_id=employee_id, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, email, password=None, **extra_fields):
+    def create_superuser(self, email, employee_id, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        return self.create_user(email, password, **extra_fields)
+        return self.create_user(email, employee_id, password, **extra_fields)
 
 
 class LoanOfficer(AbstractUser):
@@ -54,8 +57,8 @@ class LoanOfficer(AbstractUser):
     secondary_phone = models.CharField(max_length=15, blank=True, null=True)
     address = models.ForeignKey(Address, on_delete=models.SET_NULL, null=True)
 
-    employee_id = models.CharField(max_length=50, unique=True, blank=True)
-    username = models.CharField(max_length=50, unique=True, blank=True)
+    employee_id = models.CharField(max_length=5, blank=True, unique=True)
+    username = None
     is_active = models.BooleanField(default=True)
     date_joined = models.DateTimeField(default=timezone.now)
 
@@ -79,10 +82,14 @@ class LoanOfficer(AbstractUser):
         verbose_name='user permissions',
     )
 
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['first_name', 'last_name', 'nida_number', 'primary_phone']
+    USERNAME_FIELD = 'employee_id'
+    REQUIRED_FIELDS = ['email', 'first_name', 'last_name', 'nida_number', 'primary_phone']
 
     objects = LoanOfficerManager()
+
+    class Meta:
+        verbose_name = 'Loan Officer'
+        verbose_name_plural = 'Loan Officers'
 
     def __str__(self):
         return f"{self.first_name} {self.last_name} - {self.employee_id}"
@@ -115,7 +122,14 @@ def generate_employee_id(sender, instance, **kwargs):
 
 
 class Customer(models.Model):
+    ID_TYPE_CHOICES = [
+        ('NIDA', 'National ID'),
+        ('VOTER', 'Voter ID'),
+        ('OTHER', 'Other'),
+    ]
+
     full_name = models.CharField(max_length=100)
+    id_type = models.CharField(max_length=10, choices=ID_TYPE_CHOICES, default='NIDA')
     id_number = models.CharField(max_length=20, unique=True)
     email = models.EmailField(blank=True, null=True)
     phone = models.CharField(max_length=15)
@@ -139,6 +153,41 @@ class Customer(models.Model):
 
     def __str__(self):
         return f"{self.full_name} - {self.id_number}"
+
+    def clean(self):
+        super().clean()
+        if self.id_type == 'NIDA' and len(self.id_number) != 20:
+            raise ValidationError(('National ID must be exactly 20 digits long.'))
+        elif self.id_type == 'VOTER' and len(self.id_number) != 14:
+            raise ValidationError(('Voter ID must be exactly 14 digits long.'))
+        elif self.id_type == 'OTHER' and len(self.id_number) > 20:
+            raise ValidationError(('Other ID types must be at most 20 characters long.'))
+
+    class Meta:
+        verbose_name = 'Customer'
+        verbose_name_plural = 'Customers'
+
+
+class Expense(models.Model):
+    EXPENSE_TYPE_CHOICES = [
+        ('personal', 'Personal'),
+        ('institution', 'Institution'),
+    ]
+    
+    user = models.ForeignKey(LoanOfficer, on_delete=models.SET_NULL, null=True, blank=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    expense_type = models.CharField(max_length=20, choices=EXPENSE_TYPE_CHOICES, default='personal')
+    description = models.TextField()
+    date = models.DateField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Expense {self.id} - {self.user if self.user else 'Institution'}"
+
+    class Meta:
+        verbose_name_plural = "Expenses"
+        ordering = ['-date', '-created_at']
 
 
 class Referee(models.Model):

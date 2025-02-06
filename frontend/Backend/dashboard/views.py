@@ -11,6 +11,7 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.utils import timezone
 from datetime import timedelta
 from .models import LoanOfficer, Customer, LoanApplication
+from rest_framework import serializers
 
 # Keep your existing ViewSets
 class LoanOfficerViewSet(viewsets.ModelViewSet):
@@ -21,11 +22,17 @@ class LoanOfficerViewSet(viewsets.ModelViewSet):
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
+    permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
+        print(f"Current user ID: {self.request.user.id}")
+        print(f"Current user type: {type(self.request.user)}")
+        
         if self.request.user.is_staff:
             return Customer.objects.all()
-        return Customer.objects.filter(loan_officer__user=self.request.user)
+            
+        # Direct filter on loan_officer since LoanOfficer is the user model
+        return Customer.objects.filter(loan_officer=self.request.user)
 
 class LoanApplicationViewSet(viewsets.ModelViewSet):
     queryset = LoanApplication.objects.all()
@@ -58,34 +65,35 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         return Response({"status": "loan rejected"})
         
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """
-    Custom token serializer to use email instead of username
-    """
-    username_field = 'email'
+    username_field = 'employee_id'
 
     def validate(self, attrs):
-        # Authenticate using email and password
         authenticate_kwargs = {
-            'email': attrs.get('email'),
+            'employee_id': attrs.get('employee_id'),
             'password': attrs.get('password')
         }
         try:
-            user = LoanOfficer.objects.get(email=authenticate_kwargs['email'])
+            user = LoanOfficer.objects.get(employee_id=authenticate_kwargs['employee_id'])
+            print(f"Found user: {user.employee_id}")
+            print(f"Stored password hash: {user.password}")
             if user.check_password(authenticate_kwargs['password']):
+                print("Password check passed")
                 refresh = self.get_token(user)
                 data = {
                     'refresh': str(refresh),
                     'access': str(refresh.access_token),
                     'user_id': user.id,
                     'email': user.email,
+                    'employee_id': user.employee_id,
                     'first_name': user.first_name,
                     'last_name': user.last_name,
-                    'employee_id': user.employee_id
                 }
                 return data
             else:
+                print("Password check failed")
                 raise serializers.ValidationError('Invalid credentials')
         except LoanOfficer.DoesNotExist:
+            print(f"No user found with employee_id: {authenticate_kwargs['employee_id']}")
             raise serializers.ValidationError('Invalid credentials')
 
 class CustomTokenObtainPairView(TokenObtainPairView):
