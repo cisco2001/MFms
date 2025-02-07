@@ -1,12 +1,12 @@
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Max, Sum
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 from django.utils import timezone
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 from django.core.exceptions import ValidationError
-
+from datetime import timedelta
 
 class Address(models.Model):
     region = models.CharField(max_length=100)
@@ -69,6 +69,8 @@ class LoanOfficer(AbstractUser):
         blank=True,
     )
 
+    total_allocated = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)  # Total amount allocated
+
     groups = models.ManyToManyField(
         'auth.Group',
         related_name='loan_officer_set',
@@ -90,9 +92,19 @@ class LoanOfficer(AbstractUser):
     class Meta:
         verbose_name = 'Loan Officer'
         verbose_name_plural = 'Loan Officers'
+    
+    def get_available_balance(self):
+        """Calculate remaining balance after loans and expenses"""
+        total_loans = LoanApplication.objects.filter(
+            loan_officer=self, status='APPROVED'
+        ).aggregate(total=Sum('amount_approved'))['total'] or 0
 
+        total_expenses = Expense.objects.filter(user=self).aggregate(total=Sum('amount'))['total'] or 0
+
+        return self.total_allocated - (total_loans + total_expenses)
+    
     def __str__(self):
-        return f"{self.first_name} {self.last_name} - {self.employee_id}"
+        return f"{self.first_name} {self.last_name} - {self.employee_id} (Balance: {self.get_available_balance()})"
 
 
 @receiver(pre_save, sender=LoanOfficer)
@@ -135,7 +147,8 @@ class Customer(models.Model):
     phone = models.CharField(max_length=15)
     alternative_phone = models.CharField(max_length=15, blank=True, null=True)
     address = models.ForeignKey(Address, on_delete=models.SET_NULL, null=True)
-    photo = models.ImageField(upload_to='customers/photos/', null=True, blank=True)
+    profile_picture = models.ImageField(upload_to='customers/profile_pictures/', null=True, blank=True)
+    id_photo = models.ImageField(upload_to='customers/id_photos/', null=True, blank=True)
 
     occupation = models.CharField(max_length=100, blank=True, null=True)
     monthly_income = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
@@ -182,12 +195,15 @@ class Expense(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        """Ensure expenses do not exceed available balance"""
+        if self.user and self.amount > self.user.get_available_balance():
+            raise ValidationError("Insufficient funds for this expense.")
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"Expense {self.id} - {self.user if self.user else 'Institution'}"
 
-    class Meta:
-        verbose_name_plural = "Expenses"
-        ordering = ['-date', '-created_at']
 
 
 class Referee(models.Model):
@@ -222,6 +238,14 @@ class LoanApplication(models.Model):
         ('CANCELLED', 'Cancelled'),
     ]
 
+    COLLATERAL_TYPE_CHOICES = [
+        ('vehicle', 'Vehicle'),
+        ('land', 'Land'),
+        ('house', 'House'),
+        ('equipment', 'Equipment'),
+        ('other', 'Other'),
+    ]
+
     customer = models.ForeignKey(
         Customer,
         on_delete=models.CASCADE,
@@ -241,10 +265,9 @@ class LoanApplication(models.Model):
 
     amount_requested = models.DecimalField(max_digits=12, decimal_places=2)
     amount_approved = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    interest = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)  # New Field
     purpose = models.TextField()
     term_months = models.IntegerField()
-    interest_rate = models.DecimalField(max_digits=5, decimal_places=2)
-
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DRAFT')
     approved_by = models.ForeignKey(
         LoanOfficer,
@@ -255,11 +278,23 @@ class LoanApplication(models.Model):
     )
     rejection_reason = models.TextField(blank=True, null=True)
 
+    # Collateral fields
+    collateral_type = models.CharField(max_length=20, choices=COLLATERAL_TYPE_CHOICES, default='other')
+    collateral_description = models.TextField(blank=True, null=True)
+    collateral_photo = models.ImageField(upload_to='collaterals/photos/', null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     approved_date = models.DateTimeField(null=True, blank=True)
+
+    def get_due_date(self):
+        """Calculate the due date based on approved date and loan term."""
+        if self.approved_date and self.term_months:
+            return self.approved_date + timedelta(days=self.term_months * 30)  # Approximate month as 30 days
+        return None
+    
     def __str__(self):
-        return f"Loan #{self.id} - {self.customer.full_name}"
+        return f"Loan #{self.id} - {self.customer.full_name} - {self.collateral_type}"
 
     class Meta:
         ordering = ['-created_at']
@@ -284,3 +319,52 @@ class LoanRepayment(models.Model):
 
     class Meta:
         ordering = ['-payment_date']
+
+class Allocation(models.Model):
+    loan_officer = models.ForeignKey(LoanOfficer, on_delete=models.CASCADE, related_name="allocations")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    allocated_by = models.ForeignKey(LoanOfficer, on_delete=models.SET_NULL, null=True, blank=True, related_name="allocated_funds")
+    date_allocated = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        """Automatically update Loan Officer's total allocated amount when a new allocation is made"""
+        super().save(*args, **kwargs)
+        self.loan_officer.total_allocated += self.amount
+        self.loan_officer.save()
+
+    def __str__(self):
+        return f"{self.amount} allocated to {self.loan_officer} on {self.date_allocated}"
+
+class DailyReport(models.Model):
+    loan_officer = models.ForeignKey(LoanOfficer, on_delete=models.CASCADE, related_name="daily_reports")
+    report_date = models.DateField(default=timezone.now)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('loan_officer', 'report_date')  # Prevent duplicate reports for the same day
+
+    def __str__(self):
+        return f"Report of {self.loan_officer} - {self.report_date}"
+
+    def get_total_collections(self):
+        return LoanRepayment.objects.filter(
+            loan_application__loan_officer=self.loan_officer,
+            payment_date=self.report_date
+        ).aggregate(total=Sum('amount_paid'))['total'] or 0.00
+
+    def get_total_new_loans(self):
+        return LoanApplication.objects.filter(
+            loan_officer=self.loan_officer,
+            status='APPROVED',
+            created_at__date=self.report_date
+        ).aggregate(total=Sum('amount_approved'))['total'] or 0.00
+
+    def get_total_expenses(self):
+        return Expense.objects.filter(
+            user=self.loan_officer,
+            date=self.report_date
+        ).aggregate(total=Sum('amount'))['total'] or 0.00
+
+    def get_remaining_balance(self):
+        return self.loan_officer.get_available_balance()

@@ -6,8 +6,16 @@ from django.shortcuts import render
 from django.utils import timezone
 from datetime import datetime, timedelta
 from django.db.models.functions import TruncMonth
-from .models import LoanOfficer, Customer, LoanApplication, Address, Referee, LoanRepayment, Expense
+from .models import LoanOfficer, Customer, LoanApplication, Address, Referee, LoanRepayment, Expense, Allocation, DailyReport
 from django.core.exceptions import ValidationError
+from django.shortcuts import get_object_or_404
+from django.utils.timezone import now
+from django.http import HttpResponseRedirect
+from .models import DailyReport
+from .utils import generate_pdf_report
+from django.utils.html import format_html
+from django.urls import reverse
+from django.db import models
 
 # Unregister the default User and Group models
 admin.site.unregister(Group)
@@ -81,7 +89,7 @@ class RefereeAdmin(admin.ModelAdmin):
 
 @admin.register(LoanOfficer)
 class LoanOfficerAdmin(admin.ModelAdmin):
-    list_display = ('first_name', 'middle_name', 'last_name', 'primary_phone', 'email', 'nida_number', 'get_total_collections')
+    list_display = ('first_name', 'middle_name', 'last_name', 'primary_phone', 'email', 'nida_number', 'get_total_collections', 'get_available_balance')
     search_fields = ('first_name', 'middle_name', 'last_name', 'email', 'employee_id', 'nida_number', 'primary_phone')
     def save_model(self, request, obj, form, change):
         if not change:  # If this is a new object (not an update)
@@ -95,6 +103,10 @@ class LoanOfficerAdmin(admin.ModelAdmin):
         ).aggregate(total=Sum('amount_paid'))['total'] or 0
     get_total_collections.short_description = 'Total Collections'
     
+    def get_available_balance(self, obj):
+        return obj.get_available_balance()
+    get_available_balance.short_description = "Available Balance"
+
     fieldsets = (
         ('Personal Information', {
             'fields': ('first_name', 'middle_name', 'last_name', 'nida_number', 'birth_date', 'email',
@@ -110,28 +122,41 @@ class LoanOfficerAdmin(admin.ModelAdmin):
 
 @admin.register(Customer)
 class CustomerAdmin(admin.ModelAdmin):
-    list_display = ('full_name', 'id_type', 'id_number', 'email', 'phone', 'loan_officer', 'created_at', 'get_total_loans')
-    search_fields = ('full_name', 'id_number', 'email', 'phone')
+    list_display = ('full_name', 'phone', 'loan_officer', 'created_at', 'get_total_borrowed', 'get_expected_repayment', 'get_due_date')
+    search_fields = ('full_name', 'phone')
     list_filter = ['id_type', 'is_active']
-    
-    def get_total_loans(self, obj):
+
+    def get_total_borrowed(self, obj):
+        """Returns the total amount approved for the customer."""
         return LoanApplication.objects.filter(
             customer=obj, 
             status='APPROVED'
         ).aggregate(total=Sum('amount_approved'))['total'] or 0
-    get_total_loans.short_description = 'Total Loans'
-    
+    get_total_borrowed.short_description = 'Total Borrowed'
+
+    def get_expected_repayment(self, obj):
+        """Returns the total amount the customer is expected to repay (borrowed + agreed extra)."""
+        return LoanApplication.objects.filter(
+            customer=obj, 
+            status='APPROVED'
+        ).aggregate(total=Sum(models.F('amount_approved') + models.F('interest')))['total'] or 0
+    get_expected_repayment.short_description = 'Expected Repayment'
+
+    def get_due_date(self, obj):
+        """Returns the latest due date of all the customer's loans."""
+        latest_due_date = LoanApplication.objects.filter(
+            customer=obj, status='APPROVED'
+        ).order_by('-approved_date').first()
+
+        return latest_due_date.get_due_date() if latest_due_date else "N/A"
+    get_due_date.short_description = 'Due Date'
+
     fieldsets = (
         ('Personal Information', {
-            'fields': (
-                'full_name', 
-                ('id_type', 'id_number'),
-                'address',
-                'photo'
-            ),
+            'fields': ('full_name', 'profile_picture', 'id_photo'),
         }),
         ('Contact Information', {
-            'fields': ('email', 'phone', 'alternative_phone'),
+            'fields': ('phone', 'alternative_phone', 'address',),
         }),
         ('Financial Information', {
             'fields': ('occupation', 'monthly_income'),
@@ -141,28 +166,20 @@ class CustomerAdmin(admin.ModelAdmin):
         }),
     )
 
-    def clean_id_number(self, id_number, id_type):
-        if id_type == 'NIDA' and len(id_number) != 20:
-            raise ValidationError('National ID must be exactly 20 digits long.')
-        elif id_type == 'VOTER' and len(id_number) != 14:
-            raise ValidationError('Voter ID must be exactly 14 digits long.')
-        elif id_type == 'OTHER' and len(id_number) > 20:
-            raise ValidationError('Other ID types must be at most 20 characters long.')
-        return id_number
-
     def save_model(self, request, obj, form, change):
-        # Validate ID number based on ID type
-        self.clean_id_number(obj.id_number, obj.id_type)
         super().save_model(request, obj, form, change)
+
 
 @admin.register(LoanApplication)
 class LoanApplicationAdmin(admin.ModelAdmin):
-    list_display = ('id', 'customer', 'loan_officer', 'referee', 'amount_requested', 'status', 'created_at', 'get_repayment_status')
-    list_filter = []
+    list_display = (
+        'id', 'customer', 'loan_officer', 'referee', 
+        'amount_requested', 'status', 'collateral_type', 'created_at', 'get_repayment_status'
+    )
     search_fields = ('customer__full_name', 'loan_officer__email', 'referee__full_name')
     date_hierarchy = 'created_at'
     readonly_fields = ('created_at', 'updated_at')
-    
+
     def get_repayment_status(self, obj):
         total_paid = obj.repayments.aggregate(total=Sum('amount_paid'))['total'] or 0
         if obj.amount_approved:
@@ -175,7 +192,10 @@ class LoanApplicationAdmin(admin.ModelAdmin):
             'fields': ('customer', 'loan_officer', 'referee'),
         }),
         ('Loan Details', {
-            'fields': ('amount_requested', 'amount_approved', 'purpose', 'term_months', 'interest_rate'),
+            'fields': ('amount_requested', 'amount_approved', 'interest', 'purpose', 'term_months'),
+        }),
+        ('Collateral Information', {
+            'fields': ('collateral_type', 'collateral_description', 'collateral_photo'),
         }),
         ('Status', {
             'fields': ('status', 'approved_by', 'rejection_reason'),
@@ -216,3 +236,52 @@ class ExpenseAdmin(admin.ModelAdmin):
         if request.user.is_superuser:
             return qs
         return qs.filter(loan_officer__user=request.user)
+
+@admin.register(Allocation)
+class AllocationAdmin(admin.ModelAdmin):
+    list_display = ('loan_officer', 'amount', 'allocated_by', 'date_allocated')
+    search_fields = ('loan_officer__first_name', 'loan_officer__last_name')
+    date_hierarchy = 'date_allocated'
+
+@admin.register(DailyReport)
+class DailyReportAdmin(admin.ModelAdmin):
+    list_display = ('loan_officer', 'report_date', 'total_collections', 'total_new_loans', 'total_expenses', 'remaining_balance', 'download_pdf')
+    search_fields = ('loan_officer__first_name', 'loan_officer__last_name')
+    date_hierarchy = 'report_date'
+    list_filter = ('loan_officer', 'report_date')
+
+    def total_collections(self, obj):
+        return obj.get_total_collections()
+    total_collections.short_description = "Total Collections"
+
+    def total_new_loans(self, obj):
+        return obj.get_total_new_loans()
+    total_new_loans.short_description = "Total New Loans"
+
+    def total_expenses(self, obj):
+        return obj.get_total_expenses()
+    total_expenses.short_description = "Total Expenses"
+
+    def remaining_balance(self, obj):
+        return obj.get_remaining_balance()
+    remaining_balance.short_description = "Remaining Balance"
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path('generate-pdf/<int:report_id>/', self.admin_site.admin_view(self.generate_pdf), name='generate_pdf'),
+        ]
+        return custom_urls + urls
+
+    def generate_pdf(self, request, report_id):
+        report = get_object_or_404(DailyReport, id=report_id)
+        return generate_pdf_report(report.loan_officer, report.report_date)
+
+    def download_pdf(self, obj):
+        """
+        Creates a clickable link instead of returning a redirect response.
+        """
+        pdf_url = reverse('admin:generate_pdf', args=[obj.id])
+        return format_html('<a href="{}" target="_blank">Download PDF</a>', pdf_url)
+    
+    download_pdf.short_description = "Download PDF"

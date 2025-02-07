@@ -109,8 +109,25 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # jazzmin settings
 JAZZMIN_SETTINGS = {
-    "site_title": "Retawa Admin",
+     "icons": {
+        "auth.user": "fas fa-user",
+        "LoanOfficer": "fas fa-user-tie",
+        "Customer": "fas fa-users",
+        "LoanApplication": "fas fa-file-contract",
+        "LoanRepayment": "fas fa-money-bill-wave",
+        "Expense": "fas fa-receipt",
+        "Address": "fas fa-map-marker-alt",
+        "Referee": "fas fa-address-book",
+        "Allocation": "fas fa-dollar-sign",
+        "DailyReport": "fas fa-chart-line"
+    },
+    "show_ui_builder": False,
+    "show_sidebar": True,
+    "navigation_expanded": False,
+    "show_recent_actions": False,
     "hide_apps": ["auth"],
+    "dashboard_sidebar_hide_unused_apps": True, 
+    "site_title": "Retawa Admin",
     "site_header": "RETAWA Admin Dashboard",
     "site_brand": "RETAWA",
     "welcome_sign": "Welcome to MFI Management System",
