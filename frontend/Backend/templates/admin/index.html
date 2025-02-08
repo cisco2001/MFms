@@ -1,12 +1,4 @@
 {% extends "admin/index.html" %}
-{% load i18n %}
 
-{% block content %}
-<div id="content-main">
-    {% include "admin/app_list.html" with app_list=app_list show_changelinks=True %}
-</div>
-{% endblock %}
-
-{% block sidebar %}
-{# This block is intentionally left empty to remove the recent actions panel #}
+{% block sidebar  %}
 {% endblock %}

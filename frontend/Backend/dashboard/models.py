@@ -247,17 +247,17 @@ class LoanApplication(models.Model):
     ]
 
     customer = models.ForeignKey(
-        Customer,
+        'Customer',
         on_delete=models.CASCADE,
         related_name='loan_applications'
     )
     loan_officer = models.ForeignKey(
-        LoanOfficer,
+        'LoanOfficer',
         on_delete=models.CASCADE,
         related_name='handled_applications'
     )
     referee = models.ForeignKey(
-        Referee,
+        'Referee',
         on_delete=models.SET_NULL,
         null=True,
         related_name='loan_applications'
@@ -265,12 +265,12 @@ class LoanApplication(models.Model):
 
     amount_requested = models.DecimalField(max_digits=12, decimal_places=2)
     amount_approved = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    interest = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)  # New Field
+    interest = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     purpose = models.TextField()
     term_months = models.IntegerField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DRAFT')
     approved_by = models.ForeignKey(
-        LoanOfficer,
+        'LoanOfficer',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -287,14 +287,66 @@ class LoanApplication(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     approved_date = models.DateTimeField(null=True, blank=True)
 
+    def save(self, *args, **kwargs):
+        # If status is being changed to APPROVED and approved_date isn't set
+        if self.status == 'APPROVED' and not self.approved_date:
+            self.approved_date = timezone.now()
+        super().save(*args, **kwargs)
+
     def get_due_date(self):
-        """Calculate the due date based on approved date and loan term."""
+        """
+        Calculate the due date based on approved date and loan term.
+        Returns:
+            datetime: The calculated due date
+            None: If loan is not approved or term_months is not set
+        """
         if self.approved_date and self.term_months:
-            return self.approved_date + timedelta(days=self.term_months * 30)  # Approximate month as 30 days
+            return self.approved_date + timedelta(days=self.term_months * 30)
         return None
-    
+
+    def is_overdue(self):
+        """
+        Check if the loan is overdue
+        Returns:
+            bool: True if loan is overdue, False otherwise
+        """
+        if self.status != 'APPROVED':
+            return False
+            
+        due_date = self.get_due_date()
+        if due_date:
+            return timezone.now() > due_date
+        return False
+
+    def get_days_overdue(self):
+        """
+        Calculate number of days the loan is overdue
+        Returns:
+            int: Number of days overdue
+            0: If not overdue or due date not set
+        """
+        if not self.is_overdue():
+            return 0
+            
+        due_date = self.get_due_date()
+        if due_date:
+            delta = timezone.now() - due_date
+            return max(0, delta.days)
+        return 0
+
+    def get_total_paid(self):
+        """Calculate total amount paid for this loan"""
+        return self.repayments.aggregate(total=Sum('amount_paid'))['total'] or 0
+
+    def get_remaining_balance(self):
+        """Calculate remaining balance to be paid"""
+        if self.amount_approved and self.interest:
+            total_to_pay = self.amount_approved + self.interest
+            return max(0, total_to_pay - self.get_total_paid())
+        return 0
+
     def __str__(self):
-        return f"Loan #{self.id} - {self.customer.full_name} - {self.collateral_type}"
+        return f"Loan #{self.id} - {self.customer.full_name} - {self.status}"
 
     class Meta:
         ordering = ['-created_at']

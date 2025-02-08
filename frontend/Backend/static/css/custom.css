@@ -1,0 +1,26 @@
+.brand-link img {
+    max-height: 50px;  /* Adjust height */
+    width: auto;  /* Maintain aspect ratio */
+}
+
+body {
+    font-family: 'Poppins', sans-serif !important;
+}
+
+.dashboard .tile {
+    font-family: 'Poppins', sans-serif !important;
+}
+
+.navbar, .navbar-nav, .navbar-brand, .sidebar {
+    font-family: 'Poppins', sans-serif !important;
+}
+
+.content-header h1 {
+    font-family: 'Poppins', sans-serif !important;
+}
+
+.content-wrapper {
+    font-family: 'Poppins', sans-serif !important;
+}
+
+/* Add any other styles you wish to modify */

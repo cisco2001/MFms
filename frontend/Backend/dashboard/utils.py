@@ -1,13 +1,14 @@
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from django.http import HttpResponse
-from datetime import timedelta
-from django.utils.timezone import now
-from django.db.models import Sum
 from decimal import Decimal
-from .models import LoanRepayment, LoanApplication, Expense, DailyReport
+from .models import LoanRepayment, LoanApplication, Expense
+
+def format_amount(amount):
+    """Helper function to format amount with Tsh"""
+    return f"Tsh {amount:,.2f}"
 
 def generate_pdf_report(loan_officer, report_date):
     response = HttpResponse(content_type='application/pdf')
@@ -18,24 +19,23 @@ def generate_pdf_report(loan_officer, report_date):
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
 
-    # Styles
     styles = getSampleStyleSheet()
     title_style = styles['Title']
     heading_style = styles['Heading2']
     normal_style = styles['BodyText']
 
-    # Title
+    # Logo and basic info remain the same
+    logo_path = "static/images/company_logo.png"
+    logo = Image(logo_path, width=80, height=50)
+    elements.append(logo)
+    elements.append(Spacer(1, 12))
     elements.append(Paragraph("Daily Loan Officer Report", title_style))
     elements.append(Spacer(1, 12))
-
-    # Loan Officer & Date Info
     elements.append(Paragraph(f"Date: {report_date}", normal_style))
     elements.append(Paragraph(f"Loan Officer: {loan_officer.first_name} {loan_officer.last_name}", normal_style))
     elements.append(Spacer(1, 12))
 
-    # Current Balance
     current_balance = Decimal(str(loan_officer.get_available_balance()))
-    elements.append(Paragraph(f"Current Balance: {current_balance:.2f}", normal_style))
     elements.append(Spacer(1, 12))
 
     # Loans Disbursed
@@ -43,23 +43,21 @@ def generate_pdf_report(loan_officer, report_date):
     loans_data = [["Customer Name", "Amount Approved"]]
     total_loans = Decimal('0.00')
     for loan in loans:
-        loans_data.append([loan.customer.full_name, f"{loan.amount_approved:.2f}"])
+        loans_data.append([loan.customer.full_name, format_amount(loan.amount_approved)])
         total_loans += loan.amount_approved
     if total_loans > 0:
-        loans_data.append(["Total", f"{total_loans:.2f}"])
+        loans_data.append(["Total", format_amount(total_loans)])
 
     if len(loans_data) > 1:
-        loans_table = Table(loans_data)
+        loans_table = Table(loans_data, colWidths=[320, 100])
         loans_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, 0), 'LEFT'),  # Header left alignment
-            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),  # Amount column right alignment
+            ('ALIGN', (0, 0), (-1, 0), 'LEFT'),
+            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),  # Bold for total row
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
             ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -2), colors.beige),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),  # Total row background
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
         ]))
         elements.append(Paragraph("Loans Disbursed:", heading_style))
@@ -74,23 +72,21 @@ def generate_pdf_report(loan_officer, report_date):
     expenses_data = [["Description", "Amount"]]
     total_expenses = Decimal('0.00')
     for expense in expenses:
-        expenses_data.append([expense.description, f"{expense.amount:.2f}"])
+        expenses_data.append([expense.description, format_amount(expense.amount)])
         total_expenses += expense.amount
     if total_expenses > 0:
-        expenses_data.append(["Total", f"{total_expenses:.2f}"])
+        expenses_data.append(["Total", format_amount(total_expenses)])
 
     if len(expenses_data) > 1:
-        expenses_table = Table(expenses_data)
+        expenses_table = Table(expenses_data, colWidths=[320, 100])
         expenses_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, 0), 'LEFT'),  # Header left alignment
-            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),  # Amount column right alignment
+            ('ALIGN', (0, 0), (-1, 0), 'LEFT'),
+            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),  # Bold for total row
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
             ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -2), colors.beige),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),  # Total row background
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
         ]))
         elements.append(Paragraph("Expenses Incurred:", heading_style))
@@ -105,23 +101,21 @@ def generate_pdf_report(loan_officer, report_date):
     collections_data = [["Customer Name", "Amount Paid"]]
     total_collections = Decimal('0.00')
     for collection in collections:
-        collections_data.append([collection.loan_application.customer.full_name, f"{collection.amount_paid:.2f}"])
+        collections_data.append([collection.loan_application.customer.full_name, format_amount(collection.amount_paid)])
         total_collections += collection.amount_paid
     if total_collections > 0:
-        collections_data.append(["Total", f"{total_collections:.2f}"])
+        collections_data.append(["Total", format_amount(total_collections)])
 
     if len(collections_data) > 1:
-        collections_table = Table(collections_data)
+        collections_table = Table(collections_data, colWidths=[320, 100])
         collections_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, 0), 'LEFT'),  # Header left alignment
-            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),  # Amount column right alignment
+            ('ALIGN', (0, 0), (-1, 0), 'LEFT'),
+            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),  # Bold for total row
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
             ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -2), colors.beige),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),  # Total row background
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
         ]))
         elements.append(Paragraph("Collections Received:", heading_style))
@@ -131,16 +125,15 @@ def generate_pdf_report(loan_officer, report_date):
         elements.append(Paragraph("No collections received today.", normal_style))
         elements.append(Spacer(1, 12))
 
-    # Summary
-    elements.append(Paragraph(f"Total Collections: {total_collections:.2f}", normal_style))
-    elements.append(Paragraph(f"Total Expenses: {total_expenses:.2f}", normal_style))
-    elements.append(Paragraph(f"Total Loans Disbursed: {total_loans:.2f}", normal_style))
+    # Summary with formatted amounts
+    elements.append(Paragraph(f"Total Collections: {format_amount(total_collections)}", normal_style))
+    elements.append(Paragraph(f"Total Expenses: {format_amount(total_expenses)}", normal_style))
+    elements.append(Paragraph(f"Total Loans Disbursed: {format_amount(total_loans)}", normal_style))
     elements.append(Spacer(1, 12))
 
-    # Final Balance (Current balance + Collections - Expenses - Loans disbursed)
+    # Final Balance
     final_balance = current_balance + total_collections
-    elements.append(Paragraph(f"Final Balance: {final_balance:.2f}", heading_style))
+    elements.append(Paragraph(f"Final Balance: {format_amount(final_balance)}", heading_style))
 
-    # Build PDF
     doc.build(elements)
     return response

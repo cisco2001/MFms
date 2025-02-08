@@ -109,18 +109,32 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # jazzmin settings
 JAZZMIN_SETTINGS = {
-     "icons": {
+    #"site_logo": "images/company_logo.png",
+    #"site_logo_classes": "img-fluid p-2",
+    #"custom_css": "static/css/custom.css",
+    "theme": "cosmo",
+    "icons": {
         "auth.user": "fas fa-user",
-        "LoanOfficer": "fas fa-user-tie",
-        "Customer": "fas fa-users",
-        "LoanApplication": "fas fa-file-contract",
-        "LoanRepayment": "fas fa-money-bill-wave",
-        "Expense": "fas fa-receipt",
-        "Address": "fas fa-map-marker-alt",
-        "Referee": "fas fa-address-book",
-        "Allocation": "fas fa-dollar-sign",
-        "DailyReport": "fas fa-chart-line"
+        "dashboard.LoanOfficer": "fas fa-user-tie",
+        "dashboard.Customer": "fas fa-users",
+        "dashboard.LoanApplication": "fas fa-file-contract",
+        "dashboard.LoanRepayment": "fas fa-money-bill-wave",
+        "dashboard.Expense": "fas fa-receipt",
+        "dashboard.Address": "fas fa-map-marker-alt",
+        "dashboard.Referee": "fas fa-address-book",
+        "dashboard.Allocation": "fas fa-dollar-sign",
+        "dashboard.DailyReport": "fas fa-chart-line"
     },
+    "order_with_respect_to": [
+        "auth",
+        "dashboard.Customer",
+        "dashboard.LoanApplication",
+        "dashboard.LoanRepayment",
+        "dashboard.Expense",
+        "dashboard.Allocation",
+        "dashboard.DailyReport",
+    ],
+
     "show_ui_builder": False,
     "show_sidebar": True,
     "navigation_expanded": False,
@@ -130,9 +144,9 @@ JAZZMIN_SETTINGS = {
     "site_title": "Retawa Admin",
     "site_header": "RETAWA Admin Dashboard",
     "site_brand": "RETAWA",
-    "welcome_sign": "Welcome to MFI Management System",
-    "copyright": "MFI Management Ltd",
-    "search_model": ["auth.User", "dashboard.LoanApplication"],
+    "welcome_sign": "Welcome to RETAWA Admin Dashboard",
+    "copyright": "RETAWA Loans Management System",
+    "search_model": ["dashboard.LoanApplication"],
     "topmenu_links": [
         {"name": "Home", "url": "admin:index"},
     ],

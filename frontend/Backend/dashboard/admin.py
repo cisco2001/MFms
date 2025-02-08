@@ -25,7 +25,7 @@ admin.site.unregister(Group)
 # Admin Site Customization
 admin.site.site_header = 'RETAWA Loans Management System'
 admin.site.site_title = 'RETAWA Admin Portal'
-admin.site.index_title = 'Welcome to MFI Management System'
+admin.site.index_title = 'Welcome to RETAWA Loans Management System'
 
 class CustomAdminSite(admin.AdminSite):
     def get_urls(self):
@@ -71,6 +71,7 @@ class CustomAdminSite(admin.AdminSite):
         }
         
         return render(request, 'admin/dashboard.html', context)
+
 @admin.register(Address)
 class AddressAdmin(admin.ModelAdmin):
     def get_model_perms(self, request):
@@ -84,8 +85,14 @@ class AddressInline(admin.StackedInline):  # or TabularInline
 
 @admin.register(Referee)
 class RefereeAdmin(admin.ModelAdmin):
-    list_display = ('full_name', 'phone', 'relationship_to_customer', 'address')
+    def get_model_perms(self, request):
+        """Hide from sidebar by returning empty permissions."""
+        return {}
 
+# Allow Referee to be managed within another model (e.g., Customer or LoanApplication)
+class RefereeInline(admin.StackedInline):  # or TabularInline
+    model = Referee
+    extra = 1  # Allow adding new referees
 
 @admin.register(LoanOfficer)
 class LoanOfficerAdmin(admin.ModelAdmin):
@@ -122,7 +129,7 @@ class LoanOfficerAdmin(admin.ModelAdmin):
 
 @admin.register(Customer)
 class CustomerAdmin(admin.ModelAdmin):
-    list_display = ('full_name', 'phone', 'loan_officer', 'created_at', 'get_total_borrowed', 'get_expected_repayment', 'get_due_date')
+    list_display = ('full_name', 'phone', 'loan_officer', 'created_at', 'get_total_borrowed')
     search_fields = ('full_name', 'phone')
     list_filter = ['id_type', 'is_active']
 
@@ -133,23 +140,6 @@ class CustomerAdmin(admin.ModelAdmin):
             status='APPROVED'
         ).aggregate(total=Sum('amount_approved'))['total'] or 0
     get_total_borrowed.short_description = 'Total Borrowed'
-
-    def get_expected_repayment(self, obj):
-        """Returns the total amount the customer is expected to repay (borrowed + agreed extra)."""
-        return LoanApplication.objects.filter(
-            customer=obj, 
-            status='APPROVED'
-        ).aggregate(total=Sum(models.F('amount_approved') + models.F('interest')))['total'] or 0
-    get_expected_repayment.short_description = 'Expected Repayment'
-
-    def get_due_date(self, obj):
-        """Returns the latest due date of all the customer's loans."""
-        latest_due_date = LoanApplication.objects.filter(
-            customer=obj, status='APPROVED'
-        ).order_by('-approved_date').first()
-
-        return latest_due_date.get_due_date() if latest_due_date else "N/A"
-    get_due_date.short_description = 'Due Date'
 
     fieldsets = (
         ('Personal Information', {
@@ -173,20 +163,83 @@ class CustomerAdmin(admin.ModelAdmin):
 @admin.register(LoanApplication)
 class LoanApplicationAdmin(admin.ModelAdmin):
     list_display = (
-        'id', 'customer', 'loan_officer', 'referee', 
-        'amount_requested', 'status', 'collateral_type', 'created_at', 'get_repayment_status'
+        'id', 
+        'customer', 
+        'loan_officer', 
+        'amount_requested',
+        'amount_approved', 
+        'get_total_amount',
+        'get_payment_progress', 
+        'get_due_date_display',
+        'get_overdue_status',
+        'status',
     )
+    list_filter = ('status', 'created_at', 'loan_officer')
     search_fields = ('customer__full_name', 'loan_officer__email', 'referee__full_name')
     date_hierarchy = 'created_at'
-    readonly_fields = ('created_at', 'updated_at')
+    readonly_fields = ('created_at', 'updated_at', 'approved_date')
 
-    def get_repayment_status(self, obj):
-        total_paid = obj.repayments.aggregate(total=Sum('amount_paid'))['total'] or 0
-        if obj.amount_approved:
-            return f"{(total_paid / obj.amount_approved) * 100:.2f}%"
-        return "0%"
-    get_repayment_status.short_description = 'Repayment Progress'
-    
+    def get_total_amount(self, obj):
+        """Display total amount (approved + interest)"""
+        if obj.amount_approved and obj.interest:
+            total = obj.amount_approved + obj.interest
+            return f"Tsh{total:,.2f}"
+        return "-"
+    get_total_amount.short_description = 'Total Debt'
+
+    def get_payment_progress(self, obj):
+        """Display payment progress with color coding"""
+        if obj.status != 'APPROVED':
+            return "-"
+            
+        total_paid = obj.get_total_paid()
+        if obj.amount_approved and obj.interest:
+            total_to_pay = obj.amount_approved + obj.interest
+            percentage = (total_paid / total_to_pay) * 100
+            color = 'green' if percentage >= 100 else 'orange' if percentage >= 50 else 'red'
+            
+            # Pre-format the numbers before passing to format_html
+            percentage_str = f"{percentage:.1f}"
+            total_paid_str = f"Tsh{total_paid:,.2f}"
+            total_to_pay_str = f"Tsh{total_to_pay:,.2f}"
+            
+            return format_html(
+                '<span style="color: {};">{} % ({} / {})</span>',
+                color, percentage_str, total_paid_str, total_to_pay_str
+            )
+        return "-"
+    get_payment_progress.short_description = 'Payment Progress'
+
+    def get_due_date_display(self, obj):
+        """Display due date with color coding"""
+        if obj.status != 'APPROVED':
+            return "-"
+            
+        due_date = obj.get_due_date()
+        if due_date:
+            color = 'red' if obj.is_overdue() else 'green'
+            date_str = due_date.strftime('%Y-%m-%d')
+            return format_html(
+                '<span style="color: {};">{}</span>',
+                color, date_str
+            )
+        return "-"
+    get_due_date_display.short_description = 'Due Date'
+
+    def get_overdue_status(self, obj):
+        """Display overdue status with days overdue if applicable"""
+        if obj.status != 'APPROVED':
+            return "-"
+            
+        if obj.is_overdue():
+            days = obj.get_days_overdue()
+            return format_html(
+                '<span style="color: red;">Overdue {} days</span>',
+                days
+            )
+        return format_html('<span style="color: green;">On time</span>')
+    get_overdue_status.short_description = 'Payment Status'
+
     fieldsets = (
         ('Basic Information', {
             'fields': ('customer', 'loan_officer', 'referee'),
@@ -201,7 +254,7 @@ class LoanApplicationAdmin(admin.ModelAdmin):
             'fields': ('status', 'approved_by', 'rejection_reason'),
         }),
         ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
+            'fields': ('created_at', 'updated_at', 'approved_date'),
         }),
     )
 
@@ -226,7 +279,7 @@ class LoanRepaymentAdmin(admin.ModelAdmin):
 # register expenses
 @admin.register(Expense)
 class ExpenseAdmin(admin.ModelAdmin):
-    list_display = ('description', 'amount', 'date', 'created_at')
+    list_display = ('user', 'description', 'amount', 'date', 'created_at')
     list_filter = []
     search_fields = ('description',)
     date_hierarchy = 'date'
