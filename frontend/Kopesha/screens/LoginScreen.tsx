@@ -1,53 +1,38 @@
 import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  TextInput, 
-  Button, 
-  StyleSheet, 
-  TouchableOpacity, 
-  Alert 
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import AuthService from '../services/authService';
+import { AuthStackParamList } from '../app/App';
+import { useAuth } from '../contexts/AuthContext';
 
-type RootStackParamList = {
-  Login: undefined;
-  MainApp: undefined;
-  ForgotPassword: undefined;
-};
+type LoginScreenProps = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 
-type LoginScreenProps = NativeStackScreenProps<RootStackParamList, 'Login'>;
-
-const Login: React.FC<LoginScreenProps> = ({ navigation }) => {
-  const [email, setEmail] = useState('');
+const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
+  const [employeeId, setEmployeeId] = useState('');
   const [password, setPassword] = useState('');
-  const [isFocused, setIsFocused] = useState({ 
-    email: false, 
-    password: false 
-  });
+  const [isFocused, setIsFocused] = useState({ employeeId: false, password: false });
+  const { login, isLoading } = useAuth();
 
   const handleLogin = async () => {
     try {
-      // Validate inputs
-      if (!email || !password) {
-        Alert.alert('Error', 'Please enter both email and password');
+      if (!employeeId || !password) {
+        Alert.alert('Error', 'Please enter both Employee ID and password');
         return;
       }
 
-      // Attempt login
-      await AuthService.login(email, password);
-      
-      // Setup axios interceptors
-      AuthService.setupAxiosInterceptors();
-
-      // Navigate to main app
-      navigation.replace('MainApp');
+      // Now using employeeId instead of email
+      await login(employeeId, password);
     } catch (error) {
-      // Handle login errors
       Alert.alert(
-        'Login Failed', 
-        'Invalid email or password. Please try again.'
+        'Login Failed',
+        'Invalid Employee ID or password. Please try again.'
       );
     }
   };
@@ -61,40 +46,41 @@ const Login: React.FC<LoginScreenProps> = ({ navigation }) => {
       <Text style={styles.title}>Login</Text>
       <View style={styles.inputContainer}>
         <TextInput
-          style={[
-            styles.input,
-            isFocused.email && styles.inputFocused
-          ]}
-          placeholder="Email"
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          onFocus={() => setIsFocused({ ...isFocused, email: true })}
-          onBlur={() => setIsFocused({ ...isFocused, email: false })}
+          style={[styles.input, isFocused.employeeId && styles.inputFocused]}
+          placeholder="Employee ID (RT***)"
+          value={employeeId}
+          onChangeText={setEmployeeId}
+          autoCapitalize="characters"
+          onFocus={() => setIsFocused({ ...isFocused, employeeId: true })}
+          onBlur={() => setIsFocused({ ...isFocused, employeeId: false })}
+          editable={!isLoading}
         />
         <TextInput
-          style={[
-            styles.input,
-            isFocused.password && styles.inputFocused
-          ]}
+          style={[styles.input, isFocused.password && styles.inputFocused]}
           placeholder="Password"
           value={password}
           onChangeText={setPassword}
           secureTextEntry
           onFocus={() => setIsFocused({ ...isFocused, password: true })}
           onBlur={() => setIsFocused({ ...isFocused, password: false })}
+          editable={!isLoading}
         />
       </View>
       <TouchableOpacity 
-        style={styles.loginButton}
+        style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
         onPress={handleLogin}
+        disabled={isLoading}
       >
-        <Text style={styles.loginButtonText}>Login</Text>
+        {isLoading ? (
+          <ActivityIndicator color="white" />
+        ) : (
+          <Text style={styles.loginButtonText}>Login</Text>
+        )}
       </TouchableOpacity>
       <TouchableOpacity 
         style={styles.forgotPasswordButton}
         onPress={handleForgotPassword}
+        disabled={isLoading}
       >
         <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
       </TouchableOpacity>
@@ -141,6 +127,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 15,
   },
+  loginButtonDisabled: {
+    backgroundColor: '#667799',
+  },
   loginButtonText: {
     color: 'white',
     fontSize: 16,
@@ -155,4 +144,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default Login;
+export default LoginScreen;

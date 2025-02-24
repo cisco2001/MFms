@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,24 +10,72 @@ import {
   Modal,
   TextInput,
   KeyboardAvoidingView,
+  RefreshControl,
+  Alert,
+  Image,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../contexts/AuthContext';
+import { getCollections, addCollection, getCustomers, getCustomerLoans, getLoanApplications } from '../services/api';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Picker } from '@react-native-picker/picker';
+import * as ImagePicker from 'expo-image-picker';
+import { generateReceiptPDF } from '@/utils/pdfGenerator';
+
+// Update interfaces to match API response
+interface Customer {
+  id: number;
+  full_name: string;
+  phone: string;
+  email: string | null;
+  monthly_income: string;
+  occupation: string;
+  branch: number;
+  loan_officer: number;
+  is_active: boolean;
+}
+
+interface Collection {
+  id: number;
+  amount_paid: string;
+  payment_date: string;
+  payment_method: PaymentMethod;
+  withdrawal_fees: string;
+  loan_application: number;
+  receipt: string | null;
+  created_at: string;
+  updated_at: string;
+  customer_name: string; // Add customer name to the collection
+}
 
 type PaymentMethod = 'cash' | 'mobile_money' | 'bank_transfer';
 
-interface Collection {
+interface Loan {
   id: string;
   amount: number;
-  date: string;
-  clientName: string;
+  amount_approved: string | null;
+  amount_requested: string;
+  status: 'PENDING' | 'APPROVED' | 'COMPLETED' | 'REJECTED';
+  customer_name: string; // Add customer name to the loan
+  interest: number; // Add interest to the loan
+  total_paid: number; // Add total paid to the loan
+}
+
+interface FormData {
+  customerId: string;
+  customerName: string;
   loanId: string;
+  amount: string;
   paymentMethod: PaymentMethod;
-  status: 'completed' | 'pending' | 'failed';
+  withdrawalFee?: string;
+  mobileMoneyProvider?: string;
+  receiptImage?: string;
 }
 
 interface Props {
   navigation?: any;
+  route?: any;
 }
 
 const PAYMENT_METHODS: { label: string; value: PaymentMethod; icon: string }[] = [
@@ -36,51 +84,160 @@ const PAYMENT_METHODS: { label: string; value: PaymentMethod; icon: string }[] =
   { label: 'Bank Transfer', value: 'bank_transfer', icon: 'card-outline' },
 ];
 
-const RevenueScreen: React.FC<Props> = ({ navigation }) => {
-  const [collections, setCollections] = useState<Collection[]>([
-    {
-      id: '1',
-      amount: 500,
-      date: new Date().toISOString(),
-      clientName: 'John Doe',
-      loanId: 'L123456',
-      paymentMethod: 'cash',
-      status: 'completed',
-    },
-    {
-      id: '2',
-      amount: 750,
-      date: new Date().toISOString(),
-      clientName: 'Jane Smith',
-      loanId: 'L123457',
-      paymentMethod: 'mobile_money',
-      status: 'completed',
-    },
-  ]);
+const MOBILE_MONEY_PROVIDERS = ['M-Pesa', 'Mixx by Yas', 'Halopesa', 'Airtel Money'];
 
+const RevenueScreen: React.FC<Props> = ({ navigation, route }) => {
+  const insets = useSafeAreaInsets();
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loans, setLoans] = useState<Loan[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
-  const [formData, setFormData] = useState({
-    clientName: '',
+  const [formData, setFormData] = useState<FormData>({
+    customerId: '',
+    customerName: '',
     loanId: '',
     amount: '',
-    paymentMethod: 'cash' as PaymentMethod,
+    paymentMethod: 'cash',
   });
+  const [isFormDisabled, setIsFormDisabled] = useState(false);
+  const { token } = useAuth();
 
-  const getTotalCollections = (): number => {
-    return collections.reduce((sum, collection) => 
-      collection.status === 'completed' ? sum + collection.amount : sum, 0
-    );
+  useEffect(() => {
+    if (route.params?.openForm) {
+      setIsModalVisible(true);
+    }
+  }, [route.params?.openForm]);
+
+  const fetchCollections = async (showLoading = true) => {
+    if (!token) return;
+
+    try {
+      if (showLoading) setIsLoading(true);
+      const data = await getCollections(token);
+      setCollections(data.results || []);
+    } catch (error) {
+      console.error('Failed to fetch collections:', error);
+      Alert.alert('Error', 'Failed to load collections. Pull down to refresh.');
+      setCollections([]);
+    } finally {
+      if (showLoading) setIsLoading(false);
+    }
   };
 
-  const getStatusIcon = (status: Collection['status']) => {
-    switch (status) {
-      case 'completed':
-        return <Ionicons name="checkmark-circle" size={20} color="#34C759" />;
-      case 'pending':
-        return <Ionicons name="time" size={20} color="#FF9500" />;
-      case 'failed':
-        return <Ionicons name="close-circle" size={20} color="#FF3B30" />;
+  const fetchCustomers = async () => {
+    if (!token) return;
+    try {
+      const response = await getCustomers(token);
+      setCustomers(response.results || []);
+    } catch (error) {
+      console.error('Failed to fetch customers:', error);
+      Alert.alert('Error', 'Failed to load customers');
     }
+  };
+
+  const fetchCustomerLoans = async (customerId: string) => {
+    if (!token || !customerId) return;
+    try {
+      const response = await getCustomerLoans(customerId, token);
+      setLoans(response.results || []);
+    } catch (error) {
+      console.error('Failed to fetch customer loans:', error);
+      Alert.alert('Error', 'Failed to load customer loans');
+    }
+  };
+
+  const fetchAllActiveLoans = async () => {
+  if (!token) return;
+  try {
+    const response = await getLoanApplications(token, { status: 'APPROVED' });
+    setLoans(response.results || []);
+  } catch (error) {
+    console.error('Failed to fetch loans:', error);
+    Alert.alert('Error', 'Failed to load loan data');
+  }
+};
+  useEffect(() => {
+    if (token) {
+      fetchCollections();
+      fetchCustomers();
+      fetchAllActiveLoans();
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (formData.customerId) {
+      fetchCustomerLoans(formData.customerId);
+    }
+  }, [formData.customerId]);
+
+  const handleSubmit = async () => {
+    if (!token) {
+      Alert.alert('Error', 'Please log in to add collections');
+      return;
+    }
+  
+    if (!formData.customerId || !formData.loanId || !formData.amount) {
+      Alert.alert('Error', 'Please fill in all required fields');
+      return;
+    }
+  
+    if (formData.paymentMethod !== 'cash' && !formData.withdrawalFee) {
+      Alert.alert('Error', 'Please enter withdrawal fee');
+      return;
+    }
+  
+    // Prepare the data to match the backend's expected format
+    const newCollection = {
+      amount_paid: parseFloat(formData.amount),
+      payment_date: new Date().toISOString().split('T')[0],
+      loan_application: parseInt(formData.loanId, 10),
+      payment_method: formData.paymentMethod === 'mobile_money' ? formData.mobileMoneyProvider : formData.paymentMethod,
+      withdrawal_fees: formData.withdrawalFee ? parseFloat(formData.withdrawalFee) : 0.0,
+      mobile_money_provider: formData.mobileMoneyProvider,
+      receipt_image: formData.receiptImage,
+    };
+  
+    try {
+      // Submit the form data to the backend
+      await addCollection(newCollection, token);
+  
+      // Generate and share the PDF receipt
+      await generateReceiptPDF({
+        customerName: formData.customerName,
+        amountPaid: formData.amount,
+        withdrawalFees: formData.withdrawalFee || '0.00',
+        paymentMethod: formData.paymentMethod === 'mobile_money' ? formData.mobileMoneyProvider : formData.paymentMethod,
+        paymentDate: new Date().toLocaleDateString(),
+      });
+  
+      // Reset the form and close the modal
+      setIsModalVisible(false);
+      setFormData({
+        customerId: '',
+        customerName: '',
+        loanId: '',
+        amount: '',
+        paymentMethod: 'cash',
+      });
+  
+      // Refresh the collections list
+      fetchCollections();
+    } catch (error) {
+      console.error('Failed to add collection:', error);
+      Alert.alert('Error', 'Failed to add collection. Please try again.');
+    }
+  };
+
+  const getStatusIcon = (date: string) => {
+    const twentyFourHoursAgo = new Date();
+    twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+    const collectionDate = new Date(date);
+
+    if (collectionDate > twentyFourHoursAgo) {
+      return <Ionicons name="time" size={20} color="#FF9500" />;
+    }
+    return <Ionicons name="checkmark-circle" size={20} color="#34C759" />;
   };
 
   const getPaymentMethodIcon = (method: PaymentMethod) => {
@@ -88,34 +245,234 @@ const RevenueScreen: React.FC<Props> = ({ navigation }) => {
     return <Ionicons name={icon as any} size={20} color="#666666" />;
   };
 
-  const handleSubmit = () => {
-    if (!formData.clientName || !formData.loanId || !formData.amount) return;
+  const getTotalCollections = (): number => {
+    if (!Array.isArray(collections)) {
+      console.error("collections is not an array", collections);
+      return 0;
+    }
+    return collections.reduce(
+      (sum, collection) => sum + parseFloat(collection.amount_paid),
+      0
+    );
+  };
 
-    const newCollection: Collection = {
-      id: Date.now().toString(),
-      amount: parseFloat(formData.amount),
-      date: new Date().toISOString(),
-      clientName: formData.clientName,
-      loanId: formData.loanId,
-      paymentMethod: formData.paymentMethod,
-      status: 'completed',
-    };
+  const getTodayCollections = (): number => {
+    const today = new Date().toISOString().split('T')[0];
+    return collections
+      .filter(collection => collection.payment_date === today)
+      .reduce((sum, collection) => sum + parseFloat(collection.amount_paid), 0);
+  };
 
-    setCollections([newCollection, ...collections]);
-    setIsModalVisible(false);
-    setFormData({
-      clientName: '',
-      loanId: '',
-      amount: '',
-      paymentMethod: 'cash',
+  const getPendingAmount = (): number => {
+    return loans
+      .filter(loan => loan.status === 'APPROVED') // Only count active loans
+      .reduce((sum, loan) => {
+        if (!loan.amount_approved) return sum;
+        
+        const approvedAmount = parseFloat(loan.amount_approved);
+        const interest = loan.interest || 0;
+        const totalPaid = loan.total_paid || 0;
+        
+        if (isNaN(approvedAmount)) return sum;
+        
+        const totalDue = +approvedAmount + +interest;
+        const remaining = totalDue - +totalPaid;
+        return sum + (remaining > 0 ? remaining : 0);
+      }, 0);
+  };
+
+  const pickReceiptImage = async () => {
+    const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+
+    if (permissionResult.granted === false) {
+      Alert.alert(
+        "Permission Required",
+        "You've refused to allow this app to access your camera. Please enable camera access in your settings."
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 1,
     });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setFormData({ ...formData, receiptImage: result.assets[0].uri });
+    }
+  };
+
+  const renderForm = () => {
+    const isFormDisabled = formData.customerId && loans.length === 0;
+
+    return (
+      <ScrollView style={styles.formContainer}>
+        <View style={styles.inputGroup}>
+          <Text style={styles.inputLabel}>Customer</Text>
+          <View style={styles.pickerContainer}>
+            <Picker
+              selectedValue={formData.customerId}
+              style={styles.picker}
+              onValueChange={(itemValue, itemIndex) => {
+                const customer = customers.find(c => c.id.toString() === itemValue);
+                setFormData({
+                  ...formData,
+                  customerId: itemValue,
+                  customerName: customer?.full_name || '',
+                  loanId: '',
+                });
+              }}
+            >
+              <Picker.Item label="Select a customer" value="" />
+              {customers.map(customer => (
+                <Picker.Item
+                  key={customer.id.toString()}
+                  label={`${customer.full_name}`}
+                  value={customer.id.toString()}
+                />
+              ))}
+            </Picker>
+          </View>
+        </View>
+
+        {formData.customerId && (
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Loan</Text>
+            {loans.length > 0 ? (
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={formData.loanId}
+                  style={styles.picker}
+                  onValueChange={(itemValue) =>
+                    setFormData({ ...formData, loanId: itemValue })
+                  }
+                >
+                  <Picker.Item label="Select a loan" value="" />
+                  {loans.map(loan => (
+                    <Picker.Item
+                      key={loan.id}
+                      label={`Loan No: ${loan.id} (${loan.amount_approved 
+                        ? `Approved: ${parseFloat(loan.amount_approved).toLocaleString()} Tsh` 
+                        : `Requested: ${parseFloat(loan.amount_requested).toFixed(2)} Tsh`})`}
+                      value={loan.id}
+                    />
+                  ))}
+                </Picker>
+              </View>
+            ) : (
+              <Text style={styles.noLoansText}>No Active Loans</Text>
+            )}
+          </View>
+        )}
+
+        {formData.loanId && (
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Amount</Text>
+            <TextInput
+              style={styles.input}
+              value={formData.amount}
+              onChangeText={(text) => setFormData({ ...formData, amount: text })}
+              placeholder="Enter amount"
+              keyboardType="numeric"
+              editable={!isFormDisabled}
+            />
+          </View>
+        )}
+
+        <View style={styles.inputGroup}>
+          <Text style={styles.inputLabel}>Payment Method</Text>
+          <View style={styles.paymentMethodsContainer}>
+            {PAYMENT_METHODS.map((method) => (
+              <TouchableOpacity
+                key={method.value}
+                style={[
+                  styles.paymentMethodButton,
+                  formData.paymentMethod === method.value && styles.paymentMethodButtonActive,
+                  isFormDisabled && styles.disabledButton,
+                ]}
+                onPress={() => !isFormDisabled && setFormData({ ...formData, paymentMethod: method.value })}
+                disabled={isFormDisabled || false}
+              >
+                <Ionicons 
+                  name={method.icon as any} 
+                  size={20} 
+                  color={formData.paymentMethod === method.value ? '#FFFFFF' : '#666666'} 
+                />
+                <Text style={[
+                  styles.paymentMethodButtonText,
+                  formData.paymentMethod === method.value && styles.paymentMethodButtonTextActive,
+                ]}>
+                  {method.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {formData.paymentMethod === 'mobile_money' && (
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Mobile Money Provider</Text>
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={formData.mobileMoneyProvider}
+                style={styles.picker}
+                onValueChange={(itemValue) =>
+                  setFormData({ ...formData, mobileMoneyProvider: itemValue })
+                }
+                enabled={!isFormDisabled}
+              >
+                <Picker.Item label="Select a provider" value="" />
+                {MOBILE_MONEY_PROVIDERS.map(provider => (
+                  <Picker.Item
+                    key={provider}
+                    label={provider}
+                    value={provider}
+                  />
+                ))}
+              </Picker>
+            </View>
+          </View>
+        )}
+
+        {formData.paymentMethod !== 'cash' && (
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Withdrawal Fee</Text>
+            <TextInput
+              style={styles.input}
+              value={formData.withdrawalFee}
+              onChangeText={(text) => setFormData({ ...formData, withdrawalFee: text })}
+              placeholder="Enter withdrawal fee"
+              keyboardType="numeric"
+              editable={!isFormDisabled}
+            />
+          </View>
+        )}
+
+        {formData.paymentMethod === 'bank_transfer' && (
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Receipt</Text>
+            <TouchableOpacity 
+              onPress={pickReceiptImage} 
+              style={[styles.receiptButton, isFormDisabled && styles.disabledButton]}
+              disabled={isFormDisabled || false}
+            >
+              <Text style={styles.receiptButtonText}>Take Photo of Receipt</Text>
+            </TouchableOpacity>
+            {formData.receiptImage && (
+              <Image source={{ uri: formData.receiptImage }} style={styles.receiptImage} />
+            )}
+          </View>
+        )}
+      </ScrollView>
+    );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar style="auto" />
 
-      {/* Header with Back Button */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <TouchableOpacity 
@@ -128,18 +485,29 @@ const RevenueScreen: React.FC<Props> = ({ navigation }) => {
         </View>
         <View style={styles.headerStats}>
           <View style={styles.statItem}>
-            <Text style={styles.statLabel}>Today's Collections</Text>
-            <Text style={styles.statAmount}>${getTotalCollections().toFixed(2)}</Text>
+            <Text style={styles.statLabel}>Total Collections</Text>
+            <Text style={styles.statAmount}>{getTotalCollections().toLocaleString()} Tsh</Text>
           </View>
           <View style={styles.statItem}>
-            <Text style={styles.statLabel}>Pending</Text>
-            <Text style={styles.statCount}>{collections.filter(c => c.status === 'pending').length}</Text>
+            <Text style={styles.statLabel}>Today's Collections</Text>
+            <Text style={styles.statAmount}>{getTodayCollections().toLocaleString()} Tsh</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statLabel}>Pending Amount</Text>
+            <Text style={styles.statAmount}>{getPendingAmount().toLocaleString()} Tsh</Text>
           </View>
         </View>
       </View>
 
-      {/* Collections List */}
-      <ScrollView style={styles.content}>
+      <ScrollView 
+        style={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={isLoading}
+            onRefresh={() => fetchCollections(true)}
+          />
+        }
+      >
         {collections.map(collection => (
           <TouchableOpacity 
             key={collection.id} 
@@ -148,15 +516,17 @@ const RevenueScreen: React.FC<Props> = ({ navigation }) => {
           >
             <View style={styles.collectionMain}>
               <View style={styles.collectionHeader}>
-                <Text style={styles.clientName}>{collection.clientName}</Text>
-                {getStatusIcon(collection.status)}
+                <Text style={styles.clientName}>{collection.customer_name}</Text>
+                {getStatusIcon(collection.created_at)}
               </View>
               
-              <Text style={styles.loanId}>Loan ID: {collection.loanId}</Text>
+              <Text style={styles.loanId}>
+                Payment Date: {new Date(collection.payment_date).toLocaleDateString()}
+              </Text>
               
               <View style={styles.collectionFooter}>
                 <Text style={styles.date}>
-                  {new Date(collection.date).toLocaleDateString('en-US', {
+                  {new Date(collection.payment_date).toLocaleDateString('en-US', {
                     day: '2-digit',
                     month: 'short',
                     hour: '2-digit',
@@ -164,30 +534,36 @@ const RevenueScreen: React.FC<Props> = ({ navigation }) => {
                   })}
                 </Text>
                 <View style={styles.paymentMethod}>
-                  {getPaymentMethodIcon(collection.paymentMethod)}
+                  {getPaymentMethodIcon(collection.payment_method)}
                   <Text style={styles.paymentMethodText}>
-                    {collection.paymentMethod.split('_').map(word => 
-                      word.charAt(0).toUpperCase() + word.slice(1)
-                    ).join(' ')}
+                  {collection.payment_method === 'mobile_money' 
+                      ? 'Mobile Money'
+                      : collection.payment_method.charAt(0).toUpperCase() + 
+                        collection.payment_method.slice(1)}
                   </Text>
                 </View>
               </View>
             </View>
             
-            <Text style={styles.amount}>${collection.amount.toFixed(2)}</Text>
+            <Text style={styles.amount}>
+              {parseFloat(collection.amount_paid).toLocaleString()} Tsh
+              {collection.withdrawal_fees !== "0.00" && (
+                <Text style={styles.withdrawalFee}>
+                  {`\n(+${parseFloat(collection.withdrawal_fees).toLocaleString()} fee)`}
+                </Text>
+              )}
+            </Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
 
-      {/* Record Collection Button */}
       <TouchableOpacity 
-        style={styles.addButton} 
+        style={[styles.addButton, { bottom: insets.bottom + 16 }]} 
         onPress={() => setIsModalVisible(true)}
       >
-        <Text style={styles.addButtonText}>Record Collection</Text>
+        <Text style={styles.addButtonText}>+</Text>
       </TouchableOpacity>
 
-      {/* Collection Form Modal */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -209,77 +585,20 @@ const RevenueScreen: React.FC<Props> = ({ navigation }) => {
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.formContainer}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Client Name</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.clientName}
-                  onChangeText={(text) => setFormData({...formData, clientName: text})}
-                  placeholder="Enter client name"
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Loan ID</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.loanId}
-                  onChangeText={(text) => setFormData({...formData, loanId: text})}
-                  placeholder="Enter loan ID"
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Amount</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.amount}
-                  onChangeText={(text) => setFormData({...formData, amount: text})}
-                  placeholder="Enter amount"
-                  keyboardType="numeric"
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Payment Method</Text>
-                <View style={styles.paymentMethodsContainer}>
-                  {PAYMENT_METHODS.map((method) => (
-                    <TouchableOpacity
-                      key={method.value}
-                      style={[
-                        styles.paymentMethodButton,
-                        formData.paymentMethod === method.value && styles.paymentMethodButtonActive
-                      ]}
-                      onPress={() => setFormData({...formData, paymentMethod: method.value})}
-                    >
-                      <Ionicons 
-                        name={method.icon as any} 
-                        size={20} 
-                        color={formData.paymentMethod === method.value ? '#FFFFFF' : '#666666'} 
-                      />
-                      <Text style={[
-                        styles.paymentMethodButtonText,
-                        formData.paymentMethod === method.value && styles.paymentMethodButtonTextActive
-                      ]}>
-                        {method.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            </ScrollView>
+            {renderForm()}
 
             <View style={styles.modalFooter}>
               <TouchableOpacity 
-                style={styles.cancelButton}
+                style={[styles.cancelButton, isFormDisabled && styles.disabledButton]}
                 onPress={() => setIsModalVisible(false)}
+                disabled={isFormDisabled}
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity 
-                style={styles.submitButton}
+                style={[styles.submitButton, isFormDisabled && styles.disabledButton]}
                 onPress={handleSubmit}
+                disabled={isFormDisabled}
               >
                 <Text style={styles.submitButtonText}>Record Collection</Text>
               </TouchableOpacity>
@@ -320,10 +639,15 @@ const styles = StyleSheet.create({
   headerStats: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginTop: 8,
   },
   statItem: {
     flex: 1,
     alignItems: 'center',
+    padding: 8,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    marginHorizontal: 4,
   },
   statLabel: {
     fontSize: 14,
@@ -331,12 +655,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   statAmount: {
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#007AFF',
   },
   statCount: {
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#FF9500',
   },
@@ -400,40 +724,49 @@ const styles = StyleSheet.create({
     color: '#34C759',
     alignSelf: 'center',
   },
+  withdrawalFee: {
+    fontSize: 12,
+    color: '#FF9500',
+  },
   addButton: {
     backgroundColor: '#007AFF',
-    padding: 16,
-    borderRadius: 8,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     alignItems: 'center',
-    margin: 16,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 16,
+    bottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 4,
   },
   addButtonText: {
-    fontSize: 16,
+    fontSize: 24,
     fontWeight: 'bold',
-    color: '#ffffff',
+    color: '#FFFFFF',
   },
   modalContainer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
   },
   modalContent: {
-    width: '90%',
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: '90%',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E9ECEF',
   },
   modalTitle: {
     fontSize: 18,
@@ -442,41 +775,54 @@ const styles = StyleSheet.create({
   },
   closeButton: {
     padding: 8,
+    marginRight: -8,
   },
   formContainer: {
-    marginBottom: 16,
+    padding: 16,
   },
   inputGroup: {
     marginBottom: 16,
   },
   inputLabel: {
     fontSize: 14,
-    color: '#666666',
+    fontWeight: '600',
+    color: '#212529',
     marginBottom: 8,
   },
   input: {
-    height: 40,
-    borderColor: '#E9ECEF',
     borderWidth: 1,
+    borderColor: '#E9ECEF',
     borderRadius: 8,
-    paddingHorizontal: 8,
-    backgroundColor: '#F8F9FA',
+    padding: 12,
+    fontSize: 16,
+    color: '#212529',
+  },
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: '#E9ECEF',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  picker: {
+    height: 50,
+    width: '100%',
   },
   paymentMethodsContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginTop: 8,
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   paymentMethodButton: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E9ECEF',
-    marginHorizontal: 4,
+    backgroundColor: '#FFFFFF',
+    flex: 1,
+    minWidth: '30%',
   },
   paymentMethodButtonActive: {
     backgroundColor: '#007AFF',
@@ -484,41 +830,70 @@ const styles = StyleSheet.create({
   },
   paymentMethodButtonText: {
     fontSize: 14,
-    marginLeft: 8,
     color: '#666666',
+    marginLeft: 8,
   },
   paymentMethodButtonTextActive: {
     color: '#FFFFFF',
   },
+  receiptButton: {
+    borderWidth: 1,
+    borderColor: '#E9ECEF',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  receiptButtonText: {
+    fontSize: 14,
+    color: '#666666',
+  },
+  receiptImage: {
+    width: 100,
+    height: 100,
+    marginTop: 8,
+    borderRadius: 8,
+  },
   modalFooter: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 16,
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E9ECEF',
+    gap: 8,
   },
   cancelButton: {
     flex: 1,
-    padding: 12,
+    padding: 16,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E9ECEF',
     alignItems: 'center',
-    marginRight: 8,
+    backgroundColor: '#F8F9FA',
   },
   cancelButtonText: {
     fontSize: 16,
+    fontWeight: 'bold',
     color: '#666666',
   },
   submitButton: {
     flex: 1,
-    padding: 12,
+    padding: 16,
     borderRadius: 8,
-    backgroundColor: '#007AFF',
     alignItems: 'center',
-    marginLeft: 8,
+    backgroundColor: '#007AFF',
   },
   submitButtonText: {
     fontSize: 16,
+    fontWeight: 'bold',
     color: '#FFFFFF',
+  },
+  disabledButton: {
+    backgroundColor: '#E9ECEF',
+    opacity: 0.6,
+  },
+  noLoansText: {
+    fontSize: 14,
+    color: '#666666',
+    textAlign: 'center',
+    padding: 12,
   },
 });
 
