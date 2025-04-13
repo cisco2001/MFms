@@ -5,7 +5,26 @@ import ClientsScreen from '../screens/ClientsScreen';
 import LoansScreen from '../screens/LoansScreen';
 import ExpenseTrackerScreen from '../screens/ExpenseTrackerScreen';
 import RevenueScreen from '../screens/RevenueScreen';
-const Stack = createStackNavigator();
+import LoanSummaryScreen from '../screens/LoanSummaryScreen';
+import { RouteProp } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
+
+// Define the parameter list for the stack navigator
+export type RootStackParamList = {
+  TabNavigator: undefined;
+  Clients: undefined;
+  ExpenseTracker: undefined;
+  Loans: undefined;
+  Revenue: undefined;
+  LoanSummary: { 
+    loanId: number; 
+    clientName: string; 
+    loanAmount: number 
+  };
+};
+
+
+const Stack = createStackNavigator<RootStackParamList>();
 
 const AppNavigator = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -14,6 +33,7 @@ const AppNavigator = () => (
     <Stack.Screen name="ExpenseTracker" component={ExpenseTrackerScreen} />
     <Stack.Screen name="Loans" component={LoansScreen} />
     <Stack.Screen name="Revenue" component={RevenueScreen} />
+    <Stack.Screen name="LoanSummary" component={LoanSummaryScreen} />
   </Stack.Navigator>
 );
 

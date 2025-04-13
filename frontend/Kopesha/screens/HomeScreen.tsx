@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   TouchableOpacity,
@@ -6,8 +6,6 @@ import {
   Animated,
   StyleSheet,
   Dimensions,
-  PanResponder,
-  GestureResponderEvent,
   StatusBar,
   SafeAreaView,
 } from 'react-native';
@@ -15,11 +13,11 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { StackNavigationProp } from '@react-navigation/stack';
 import type { RootStackParamList } from '../app/App';
+import Sidebar from '@/components/Sidebar'; // Import the Sidebar component
 
 const { width, height } = Dimensions.get('window');
 const MENU_RADIUS = 120;
 const ITEM_RADIUS = 35;
-const SIDEBAR_WIDTH = width * 0.7;
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
 
@@ -33,16 +31,10 @@ interface MenuItem {
 }
 
 interface HeaderProps {
-  onNotificationPress: () => void;
   onMenuPress: () => void;
-  notificationCount?: number;
 }
 
-const Header: React.FC<HeaderProps> = ({ 
-  onNotificationPress, 
-  onMenuPress, 
-  notificationCount 
-}) => (
+const Header: React.FC<HeaderProps> = ({ onMenuPress }) => (
   <View style={styles.header}>
     <TouchableOpacity
       style={styles.headerIcon}
@@ -50,20 +42,14 @@ const Header: React.FC<HeaderProps> = ({
     >
       <MaterialIcons name="menu" size={28} color="#333" />
     </TouchableOpacity>
-
-    <TouchableOpacity
-      style={styles.headerIcon}
-      onPress={onNotificationPress}
-    >
-      <MaterialIcons name="notifications" size={28} color="#333" />
-      {notificationCount && notificationCount > 0 && (
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>
-            {notificationCount > 99 ? '99+' : notificationCount}
-          </Text>
-        </View>
-      )}
-    </TouchableOpacity>
+    
+    {/* App title/logo could go here */}
+    <View style={styles.headerTitle}>
+      <Text style={styles.headerTitleText}>Retawa Financial Service</Text>
+    </View>
+    
+    {/* Empty view for layout balance */}
+    <View style={{width: 44}} />
   </View>
 );
 
@@ -95,7 +81,6 @@ const PieMenuItem: React.FC<PieMenuItemProps> = ({
             { translateX: x },
             { translateY: y },
             { scale: isOpen ? 1 : 0 },
-            { rotate: `${rotation}deg` },
           ],
           opacity: isOpen ? 1 : 0,
         },
@@ -104,12 +89,12 @@ const PieMenuItem: React.FC<PieMenuItemProps> = ({
       <TouchableOpacity
         style={styles.menuButton}
         onPress={onPress}
-        activeOpacity={0.8}
+        activeOpacity={0.7}
       >
         <View style={styles.iconContainer}>
           <MaterialIcons name={icon} size={28} color="#1a73e8" />
         </View>
-        <Text style={[styles.label, { transform: [{ rotate: `-${rotation}deg` }] }]}>
+        <Text style={styles.label}>
           {label}
         </Text>
       </TouchableOpacity>
@@ -117,72 +102,10 @@ const PieMenuItem: React.FC<PieMenuItemProps> = ({
   );
 };
 
-const Sidebar: React.FC<{
-  isOpen: boolean;
-  onClose: () => void;
-  menuItems: MenuItem[];
-}> = ({ isOpen, onClose, menuItems }) => {
-  const translateX = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
-
-  React.useEffect(() => {
-    Animated.timing(translateX, {
-      toValue: isOpen ? 0 : -SIDEBAR_WIDTH,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [isOpen]);
-
-  if (!isOpen) return null;
-
-  return (
-    <>
-      <TouchableOpacity
-        style={styles.overlay}
-        activeOpacity={1}
-        onPress={onClose}
-      >
-        <View style={styles.overlayContent} />
-      </TouchableOpacity>
-      <Animated.View
-        style={[
-          styles.sidebar,
-          {
-            transform: [{ translateX }],
-          },
-        ]}
-      >
-        <View style={styles.sidebarHeader}>
-          <Text style={styles.sidebarTitle}>Menu</Text>
-          <TouchableOpacity onPress={onClose}>
-            <MaterialIcons name="close" size={24} color="#333" />
-          </TouchableOpacity>
-        </View>
-        {menuItems.map((item, index) => (
-          <TouchableOpacity
-            key={index}
-            style={styles.sidebarItem}
-            onPress={() => {
-              if (item.onPress) {
-                item.onPress();
-              }
-              onClose();
-            }}
-          >
-            <MaterialIcons name={item.icon} size={24} color="#1a73e8" />
-            <Text style={styles.sidebarItemText}>{item.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </Animated.View>
-    </>
-  );
-};
-
 const Homepage: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
-  const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
-  const [notificationCount, setNotificationCount] = useState<number>(3);
 
   const menuItems: MenuItem[] = [
     { 
@@ -205,10 +128,6 @@ const Homepage: React.FC = () => {
     },
   ];
 
-  const handleNotificationPress = () => {
-    console.log('Notifications pressed');
-  };
-
   const handleMenuPress = () => {
     setIsSidebarOpen(true);
   };
@@ -221,98 +140,77 @@ const Homepage: React.FC = () => {
     setIsMenuOpen(false);
   };
 
-  const calculateSelectedSection = (x: number, y: number): number => {
-    if (!isMenuOpen) return -1;
-    const dx = x - width / 2;
-    const dy = y - height / 2;
-    const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-    const normalizedAngle = (angle + 360) % 360;
-    const sectionSize = 360 / menuItems.length;
-    return Math.floor(normalizedAngle / sectionSize);
-  };
-
-  const panResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderMove: (evt: GestureResponderEvent) => {
-      const { locationX, locationY } = evt.nativeEvent;
-      const selected = calculateSelectedSection(locationX, locationY);
-      setHighlightedIndex(selected);
-    },
-    onPanResponderRelease: (evt: GestureResponderEvent) => {
-      const { locationX, locationY } = evt.nativeEvent;
-      const selected = calculateSelectedSection(locationX, locationY);
-      if (selected !== -1) {
-        handleMenuItemPress(selected);
-      }
-      setHighlightedIndex(-1);
-    },
-  });
-
   const toggleMenu = () => {
     setIsMenuOpen(!isMenuOpen);
-    setHighlightedIndex(-1);
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#f5f5f5" />
-      <Header
-        onNotificationPress={handleNotificationPress}
-        onMenuPress={handleMenuPress}
-        notificationCount={notificationCount}
-      />
+      <StatusBar barStyle="dark-content" backgroundColor="#f8f9fa" />
+      <Header onMenuPress={handleMenuPress} />
+      
       <View style={styles.container}>
-        <View
-          style={styles.menuContainer}
-          {...(isMenuOpen ? panResponder.panHandlers : {})}
-        >
-          <TouchableOpacity
-            style={[styles.centerButton, isMenuOpen && styles.centerButtonActive]}
-            onPress={toggleMenu}
-            activeOpacity={0.8}
-          >
-            <MaterialIcons
-              name={isMenuOpen ? 'close' : 'add'}
-              size={32}
-              color="white"
-            />
-          </TouchableOpacity>
+        {/* Main content - positioned higher when menu is open */}
+        <View style={[
+          styles.contentContainer,
+          isMenuOpen && styles.contentContainerWithMenuOpen
+        ]}>
+          <Text style={styles.welcomeText}>Welcome to your dashboard</Text>
+          <Text style={styles.instructionText}>Tap the + button to explore features</Text>
+        </View>
+        
+        {/* Menu */}
+        <View style={styles.menuWrapper}>
+          <View style={styles.menuContainer}>
+            {/* Show background sectors only when menu is open */}
+            {isMenuOpen && (
+              <View style={styles.pieBackground}>
+                {menuItems.map((_, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.pieSector,
+                      {
+                        transform: [{ rotate: `${index * (360 / menuItems.length)}deg` }],
+                      },
+                    ]}
+                  />
+                ))}
+              </View>
+            )}
 
-          {menuItems.map((item, index) => (
-            <PieMenuItem
-              key={index}
-              icon={item.icon}
-              label={item.label}
-              rotation={item.rotation}
-              isOpen={isMenuOpen}
-              onPress={() => handleMenuItemPress(index)}
-            />
-          ))}
+            {/* Menu center button */}
+            <TouchableOpacity
+              style={[styles.centerButton, isMenuOpen && styles.centerButtonActive]}
+              onPress={toggleMenu}
+              activeOpacity={0.8}
+            >
+              <MaterialIcons
+                name={isMenuOpen ? 'close' : 'add'}
+                size={32}
+                color="white"
+              />
+            </TouchableOpacity>
 
-          {isMenuOpen && (
-            <View style={styles.pieBackground}>
-              {menuItems.map((_, index) => (
-                <View
-                  key={index}
-                  style={[
-                    styles.pieSector,
-                    {
-                      transform: [{ rotate: `${index * (360 / menuItems.length)}deg` }],
-                      backgroundColor:
-                        highlightedIndex === index ? '#e3f2fd' : 'rgba(255,255,255,0.9)',
-                    },
-                  ]}
-                />
-              ))}
-            </View>
-          )}
+            {/* Menu items */}
+            {menuItems.map((item, index) => (
+              <PieMenuItem
+                key={index}
+                icon={item.icon}
+                label={item.label}
+                rotation={item.rotation}
+                isOpen={isMenuOpen}
+                onPress={() => handleMenuItemPress(index)}
+              />
+            ))}
+          </View>
         </View>
       </View>
-      <Sidebar
-        isOpen={isSidebarOpen}
-        onClose={() => setIsSidebarOpen(false)}
-        menuItems={menuItems}
+      
+      {/* Sidebar component */}
+      <Sidebar 
+        isOpen={isSidebarOpen} 
+        onClose={() => setIsSidebarOpen(false)} 
       />
     </SafeAreaView>
   );
@@ -321,7 +219,7 @@ const Homepage: React.FC = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f8f9fa',
   },
   header: {
     flexDirection: 'row',
@@ -329,45 +227,74 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
+    elevation: 2,
   },
   headerIcon: {
     padding: 8,
     borderRadius: 20,
-    backgroundColor: 'white',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 1.41,
-    elevation: 2,
+    backgroundColor: '#f0f4f8',
   },
-  badge: {
-    position: 'absolute',
-    right: -6,
-    top: -6,
-    backgroundColor: '#e53935',
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
-    justifyContent: 'center',
+  headerTitle: {
+    flex: 1,
     alignItems: 'center',
-    padding: 2,
   },
-  badgeText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: 'bold',
+  headerTitleText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1a73e8',
   },
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f8f9fa',
+    position: 'relative',
   },
-  menuContainer: {
+  contentContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingBottom: 160, // Space for closed menu
+    // Add a smooth transition
+    transition: '0.3s ease-in-out',
+  },
+  contentContainerWithMenuOpen: {
+    paddingTop: 0,
+    // Move content up when menu is open to avoid overlap
+    marginTop: -160,
+  },
+  welcomeText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  instructionText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+  },
+  menuWrapper: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 300, // Taller container to ensure menu items aren't cut off
+    justifyContent: 'center',
+    alignItems: 'center',
+    pointerEvents: 'box-none',
+  },
+  menuContainer: {
+    position: 'absolute',
+    bottom: 70, // Good balance for visibility
+    alignSelf: 'center',
+    width: MENU_RADIUS * 2 + 100, // Extra space for labels
+    height: MENU_RADIUS * 2 + 100, // Extra space for labels
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
   },
   centerButton: {
     width: 70,
@@ -377,7 +304,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 5,
-    zIndex: 2,
+    zIndex: 12, // Higher than pie background
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
@@ -390,7 +317,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 1,
+    zIndex: 11, // Higher than pie background
   },
   menuButton: {
     alignItems: 'center',
@@ -405,22 +332,27 @@ const styles = StyleSheet.create({
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
   },
   label: {
     fontSize: 14,
     fontWeight: '600',
     color: '#333',
     marginTop: 8,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
   },
   pieBackground: {
     position: 'absolute',
     width: MENU_RADIUS * 2,
     height: MENU_RADIUS * 2,
     borderRadius: MENU_RADIUS,
+    backgroundColor: 'rgba(255,255,255,0.5)',
     overflow: 'hidden',
-    zIndex: 0,
+    zIndex: 5, // Lower than buttons
   },
   pieSector: {
     position: 'absolute',
@@ -428,57 +360,7 @@ const styles = StyleSheet.create({
     height: MENU_RADIUS * 2,
     left: MENU_RADIUS,
     transformOrigin: '0 50%',
-  },
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    zIndex: 10,
-  },
-  overlayContent: {
-    flex: 1,
-  },
-  sidebar: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    bottom: 0,
-    width: SIDEBAR_WIDTH,
-    backgroundColor: 'white',
-    zIndex: 11,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 2, height: 0 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-  },
-  sidebarHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  sidebarTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  sidebarItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  sidebarItemText: {
-    marginLeft: 16,
-    fontSize: 16,
-    color: '#333',
+    backgroundColor: 'rgba(230,240,255,0.7)', // Light blue background
   },
 });
 

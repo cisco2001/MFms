@@ -10,6 +10,7 @@ import RevenueScreen from '../screens/RevenueScreen';
 import HomeScreen from '../screens/HomeScreen';
 import ClientProfileScreen from '@/screens/ClientProfile';
 import NewLoanScreen from '../screens/LoansScreen';
+import LoanSummaryScreen from '@/screens/LoanSummaryScreen';
 import { NavigationContainer } from '@react-navigation/native';
 
 export type AuthStackParamList = {
@@ -24,6 +25,7 @@ export type AppStackParamList = {
   Revenue: undefined;
   Loans: undefined;
   ClientProfile: { clientId: number };
+  //LoanSummary: { loanId: number };
 };
 
 const AuthStack = createStackNavigator<AuthStackParamList>();
@@ -47,6 +49,7 @@ const Navigation = () => {
           <AppStack.Screen name="ExpenseTracker" component={ExpenseTrackerScreen} />
           <AppStack.Screen name="Loans" component={LoansScreen} />
           <AppStack.Screen name="Revenue" component={RevenueScreen} />
+          <AppStack.Screen name="LoanSummary" component={LoanSummaryScreen} />
         </AppStack.Navigator>
       ) : (
         <AuthStack.Navigator screenOptions={{ headerShown: false }}>

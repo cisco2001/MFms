@@ -13,6 +13,7 @@ import {
   RefreshControl,
   Alert,
   Image,
+  UIManager,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,6 +23,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Picker } from '@react-native-picker/picker';
 import * as ImagePicker from 'expo-image-picker';
 import { generateReceiptPDF } from '@/utils/pdfGenerator';
+import * as SMS from 'expo-sms'; // Import expo-sms
+import * as Permissions from 'expo-permissions';
 
 // Update interfaces to match API response
 interface Customer {
@@ -106,8 +109,27 @@ const RevenueScreen: React.FC<Props> = ({ navigation, route }) => {
   useEffect(() => {
     if (route.params?.openForm) {
       setIsModalVisible(true);
+  
+      // Check if prefillData is available
+      if (route.params?.prefillData) {
+        const { customerId, customerName, loanId, amount, paymentMethod } = route.params.prefillData;
+  
+        // Set the form data with the prefill values
+        setFormData({
+          customerId: customerId || '',
+          customerName: customerName || '',
+          loanId: loanId || '',
+          amount: amount || '',
+          paymentMethod: paymentMethod || 'cash',
+        });
+  
+        // Fetch loans for the pre-selected customer
+        if (customerId) {
+          fetchCustomerLoans(customerId);
+        }
+      }
     }
-  }, [route.params?.openForm]);
+  }, [route.params?.openForm, route.params?.prefillData]);
 
   const fetchCollections = async (showLoading = true) => {
     if (!token) return;
@@ -171,63 +193,97 @@ const RevenueScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   }, [formData.customerId]);
 
-  const handleSubmit = async () => {
-    if (!token) {
-      Alert.alert('Error', 'Please log in to add collections');
-      return;
-    }
-  
-    if (!formData.customerId || !formData.loanId || !formData.amount) {
-      Alert.alert('Error', 'Please fill in all required fields');
-      return;
-    }
-  
-    if (formData.paymentMethod !== 'cash' && !formData.withdrawalFee) {
-      Alert.alert('Error', 'Please enter withdrawal fee');
-      return;
-    }
-  
-    // Prepare the data to match the backend's expected format
-    const newCollection = {
-      amount_paid: parseFloat(formData.amount),
-      payment_date: new Date().toISOString().split('T')[0],
-      loan_application: parseInt(formData.loanId, 10),
-      payment_method: formData.paymentMethod === 'mobile_money' ? formData.mobileMoneyProvider : formData.paymentMethod,
-      withdrawal_fees: formData.withdrawalFee ? parseFloat(formData.withdrawalFee) : 0.0,
-      mobile_money_provider: formData.mobileMoneyProvider,
-      receipt_image: formData.receiptImage,
-    };
-  
+  const sendRepaymentSMS = async (phoneNumber: string, message: string) => {
     try {
-      // Submit the form data to the backend
-      await addCollection(newCollection, token);
+      // Check if the device supports sending SMS
+      const isAvailable = await SMS.isAvailableAsync();
+      if (!isAvailable) {
+        Alert.alert('Error', 'SMS is not available on this device.');
+        return;
+      }
+
+      // do not open SMS app
+      
+      // Send the SMS
+      const { result } = await SMS.sendSMSAsync([phoneNumber], message);
   
-      // Generate and share the PDF receipt
-      await generateReceiptPDF({
-        customerName: formData.customerName,
-        amountPaid: formData.amount,
-        withdrawalFees: formData.withdrawalFee || '0.00',
-        paymentMethod: formData.paymentMethod === 'mobile_money' ? formData.mobileMoneyProvider : formData.paymentMethod,
-        paymentDate: new Date().toLocaleDateString(),
-      });
-  
-      // Reset the form and close the modal
-      setIsModalVisible(false);
-      setFormData({
-        customerId: '',
-        customerName: '',
-        loanId: '',
-        amount: '',
-        paymentMethod: 'cash',
-      });
-  
-      // Refresh the collections list
-      fetchCollections();
+      // Handle the result
+      if (result === 'sent') {
+        Alert.alert('Success', 'SMS sent successfully.');
+      } else {
+        Alert.alert('Error', 'SMS was not sent.');
+      }
     } catch (error) {
-      console.error('Failed to add collection:', error);
-      Alert.alert('Error', 'Failed to add collection. Please try again.');
+      console.error('Failed to send SMS:', error);
+      Alert.alert('Error', 'Failed to send SMS.');
     }
   };
+  
+  // Modify the handleSubmit function to send an SMS after recording a repayment
+const handleSubmit = async () => {
+  if (!token) {
+    Alert.alert('Error', 'Please log in to add collections');
+    return;
+  }
+
+  if (!formData.customerId || !formData.loanId || !formData.amount) {
+    Alert.alert('Error', 'Please fill in all required fields');
+    return;
+  }
+
+  if (formData.paymentMethod !== 'cash' && !formData.withdrawalFee) {
+    Alert.alert('Error', 'Please enter withdrawal fee');
+    return;
+  }
+
+  // Prepare the data to match the backend's expected format
+  const newCollection = {
+    amount_paid: parseFloat(formData.amount),
+    payment_date: new Date().toISOString().split('T')[0],
+    loan_application: parseInt(formData.loanId, 10),
+    payment_method: formData.paymentMethod === 'mobile_money' ? formData.mobileMoneyProvider : formData.paymentMethod,
+    withdrawal_fees: formData.withdrawalFee ? parseFloat(formData.withdrawalFee) : 0.0,
+    mobile_money_provider: formData.mobileMoneyProvider,
+    receipt_image: formData.receiptImage,
+  };
+
+  try {
+    // Submit the form data to the backend
+    await addCollection(newCollection, token);
+
+    // Generate and share the PDF receipt
+    await generateReceiptPDF({
+      customerName: formData.customerName,
+      amountPaid: formData.amount,
+      withdrawalFees: formData.withdrawalFee || '0.00',
+      paymentMethod: formData.paymentMethod === 'mobile_money' ? formData.mobileMoneyProvider : formData.paymentMethod,
+      paymentDate: new Date().toLocaleDateString(),
+    });
+
+    // Send an SMS to the customer
+    const customer = customers.find(c => c.id.toString() === formData.customerId);
+    if (customer && customer.phone) {
+      const message = `Dear ${customer.full_name}, your repayment of TZS ${formData.amount} has been recorded. Thank you!`;
+      await sendRepaymentSMS(customer.phone, message);
+    }
+
+    // Reset the form and close the modal
+    setIsModalVisible(false);
+    setFormData({
+      customerId: '',
+      customerName: '',
+      loanId: '',
+      amount: '',
+      paymentMethod: 'cash',
+    });
+
+    // Refresh the collections list
+    fetchCollections();
+  } catch (error) {
+    console.error('Failed to add collection:', error);
+    Alert.alert('Error', 'Failed to add collection. Please try again.');
+  }
+};
 
   const getStatusIcon = (date: string) => {
     const twentyFourHoursAgo = new Date();
@@ -312,28 +368,28 @@ const RevenueScreen: React.FC<Props> = ({ navigation, route }) => {
         <View style={styles.inputGroup}>
           <Text style={styles.inputLabel}>Customer</Text>
           <View style={styles.pickerContainer}>
-            <Picker
-              selectedValue={formData.customerId}
-              style={styles.picker}
-              onValueChange={(itemValue, itemIndex) => {
-                const customer = customers.find(c => c.id.toString() === itemValue);
-                setFormData({
-                  ...formData,
-                  customerId: itemValue,
-                  customerName: customer?.full_name || '',
-                  loanId: '',
-                });
-              }}
-            >
-              <Picker.Item label="Select a customer" value="" />
-              {customers.map(customer => (
-                <Picker.Item
-                  key={customer.id.toString()}
-                  label={`${customer.full_name}`}
-                  value={customer.id.toString()}
-                />
-              ))}
-            </Picker>
+          <Picker
+  selectedValue={formData.customerId}
+  style={styles.picker}
+  onValueChange={(itemValue, itemIndex) => {
+    const customer = customers.find(c => c.id.toString() === itemValue);
+    setFormData({
+      ...formData,
+      customerId: itemValue,
+      customerName: customer?.full_name || '',
+      loanId: '',
+    });
+  }}
+>
+  <Picker.Item label="Select a customer" value="" />
+  {customers.map(customer => (
+    <Picker.Item
+      key={customer.id.toString()}
+      label={`${customer.full_name}`}
+      value={customer.id.toString()}
+    />
+  ))}
+</Picker>
           </View>
         </View>
 

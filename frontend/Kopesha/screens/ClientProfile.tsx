@@ -14,7 +14,7 @@ import {
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import * as ImagePicker from 'expo-image-picker';
-
+import { getClientDetails, getLoanHistory } from '@/services/api';
 interface LoanHistory {
   id: number;
   amount_requested: number;
@@ -38,76 +38,17 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
   const [client, setClient] = useState<any>(null);
   const [loanHistory, setLoanHistory] = useState<LoanHistory[]>([]);
   const [loading, setLoading] = useState(true);
-  const [profilePicture, setProfilePicture] = useState(client?.profile_picture || null);
+  const [uploading, setUploading] = useState(false);
 
-  const fetchClientDetails = async () => {
-    try {
-      const response = await fetch(`http://192.168.100.23:8000/api/customers/${clientId}/`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-      const data = await response.json();
-      setClient(data);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to load client details');
-    }
-  };
-
-  const fetchLoanHistory = async () => {
-    try {
-      // Fetch loan applications and repayments in parallel
-      const [loanResponse, repaymentResponse] = await Promise.all([
-        fetch(`http://192.168.100.23:8000/api/loan-applications/?customer=${clientId}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        }),
-        fetch(`http://192.168.100.23:8000/api/loan-repayments/?customer=${clientId}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        })
-      ]);
   
-      const [loanData, repaymentData] = await Promise.all([
-        loanResponse.json(),
-        repaymentResponse.json()
-      ]);
-  
-      const loanApplications = loanData.results || [];
-      const repayments = repaymentData.results || [];
-
-      //console.log('repayments', repayments);
-      //console.log('loanResponse', loanApplications);
-      // Create a map of loan ID to total repayments
-      const repaymentsByLoan = repayments.reduce((acc: { [key: string]: number }, repayment: any) => {
-        const loanId = repayment.loan_application;
-        acc[loanId] = (acc[loanId] || 0) + parseFloat(repayment.amount_paid);
-        return acc;
-      }, {});
-  
-      // Combine loan data with repayment totals
-      const loanHistoryWithRepayments = loanApplications.map((loan: LoanHistory) => ({
-        ...loan,
-        amount_paid: repaymentsByLoan[loan.id] || 0,
-        repayments: repayments.filter(
-          (repayment: any) => repayment.loan_application === loan.id
-        )
-      }));
-  
-      setLoanHistory(loanHistoryWithRepayments);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to load loan history');
-      console.error('Error fetching loan history:', error);
-    }
-  };
 
   const handleRepayment = (loan: LoanHistory) => {
     navigation.navigate('Revenue', {
       openForm: true,
       prefillData: {
         clientName: client?.full_name,
+        customerId: client?.id.toString(), // Pass the customer ID
+        customerName: client?.full_name,  // Pass the customer name
         loanId: loan.id.toString(),
         amount: '',
         paymentMethod: 'cash'
@@ -115,13 +56,21 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
     });
   };
 
+  const handleLoanSummary = (loan: LoanHistory) => {
+    // Use the same direct navigation approach as in handleRepayment
+    navigation.navigate('LoanSummary', {
+      loanId: loan.id,
+      clientName: client?.full_name,
+      loanAmount: loan.amount_approved || loan.amount_requested,
+    });
+  };
+
   const calculateRepaymentProgress = (loan: LoanHistory) => {
-    console.log(loan)
     // Use amount_approved if available, otherwise fall back to amount_requested
     const principal = loan.amount_approved || 0;
     const interest = loan.interest || 0;
     const totalAmount = +principal + +interest; // using unary operator to convert to number
-    console.log(principal, interest, totalAmount)
+    
     // Handle case where total amount is 0 to avoid division by zero
     if (totalAmount <= 0) {
       return 0;
@@ -134,26 +83,136 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
   };
 
   useEffect(() => {
-    Promise.all([fetchClientDetails(), fetchLoanHistory()])
-      .finally(() => setLoading(false));
-  }, [clientId]);
+    const fetchData = async () => {
+      try {
+        const [clientData, loanHistoryData] = await Promise.all([
+          getClientDetails(clientId, token),
+          getLoanHistory(clientId, token),
+        ]);
+        setClient(clientData);
+        setLoanHistory(loanHistoryData);
+        
+        // Debug: Log client data to see the actual field names and values
+        console.log('Client Data:', clientData);
+      } catch (error) {
+        Alert.alert('Error', 'Failed to load data');
+      } finally {
+        setLoading(false);
+      }
+    };
+  
+    fetchData();
+  }, [clientId, token]);
+
+  const fetchClientDetails = async () => {
+    try {
+      const clientData = await getClientDetails(clientId, token);
+      setClient(clientData);
+    } catch (error) {
+      console.error('Error fetching client details:', error);
+      Alert.alert('Error', 'Failed to update client data');
+    }
+  };
+
+  // Helper function to get the correct address field
+  const getClientAddress = () => {
+    // Check for different potential address field names
+    if (client?.physical_address) return client.physical_address;
+    if (client?.location) return client.location;
+    if (client?.street_address) return client.street_address;
+    if (client?.residential_address) return client.residential_address;
+    
+    // If address is a number or boolean, convert to string
+    if (typeof client?.address === 'number' || typeof client?.address === 'boolean') {
+      return 'Address information not available';
+    }
+    
+    // Return the address field or N/A if none exists
+    return client?.address || 'N/A';
+  };
 
   const pickImage = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission denied', 'Sorry, we need camera roll permissions to upload images.');
-      return;
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission denied', 'Sorry, we need camera roll permissions to upload images.');
+        return;
+      }
+    
+      let result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+    
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        uploadImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error picking image:', error);
+      Alert.alert('Error', 'Failed to pick image');
     }
-  
-    let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 1,
-    });
-  
-    if (!result.canceled) {
-      setProfilePicture(result.assets[0].uri);
+  };
+
+  const takePicture = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission denied', 'Sorry, we need camera permissions to take photos.');
+        return;
+      }
+    
+      let result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+    
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        uploadImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error taking picture:', error);
+      Alert.alert('Error', 'Failed to take picture');
+    }
+  };
+
+  const uploadImage = async (uri: string) => {
+    try {
+      setUploading(true);
+      
+      // Create form data
+      const formData = new FormData();
+      formData.append('profile_picture', {
+        uri,
+        type: 'image/jpeg',
+        name: 'profile_picture.jpg',
+      } as any);
+      
+      // Send the request
+      const response = await fetch(`http://192.168.100.23:8000/api/customers/${clientId}/`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data',
+        },
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to upload image');
+      }
+      
+      // Refresh client data to get the updated profile picture
+      fetchClientDetails();
+      Alert.alert('Success', 'Profile picture updated successfully');
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to upload image');
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -176,22 +235,62 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
         <View style={{ width: 24 }} />
       </View>
 
-      <TouchableOpacity onPress={pickImage}>
-        <View style={styles.profileSection}>
-          {profilePicture ? (
-            <Image
-              source={{ uri: profilePicture }}
-              style={styles.profileImage}
-            />
+      <View style={styles.profileSection}>
+        <TouchableOpacity 
+          style={styles.profileImageContainer}
+          onPress={() => {
+            Alert.alert(
+              'Update Profile Picture',
+              'Choose an option',
+              [
+                {
+                  text: 'Take Photo',
+                  onPress: takePicture
+                },
+                {
+                  text: 'Choose from Gallery',
+                  onPress: pickImage
+                },
+                {
+                  text: 'Cancel',
+                  style: 'cancel'
+                }
+              ]
+            );
+          }}
+        >
+          {client?.profile_picture ? (
+            <View style={styles.profileImageWrapper}>
+              <Image
+                source={{ uri: client.profile_picture }}
+                style={styles.profileImage}
+                onLoad={() => console.log(`Photo loaded successfully for client: ${client.full_name}`)}
+                onError={(error) => console.log(`Photo load error for client ${client.full_name}:`, error.nativeEvent.error)}
+              />
+              <View style={styles.editIconOverlay}>
+                <Feather name="edit-2" size={16} color="#fff" />
+              </View>
+            </View>
           ) : (
-            <MaterialIcons name="person" size={80} color="#666" />
+            <View style={styles.profileImagePlaceholder}>
+              <MaterialIcons name="person" size={60} color="#666" />
+              <View style={styles.editIconOverlay}>
+                <Feather name="edit-2" size={16} color="#fff" />
+              </View>
+            </View>
           )}
-          <Text style={styles.name}>{client?.full_name}</Text>
-          <Text style={styles.subtitle}>ID: {client?.id_number}</Text>
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
+        {uploading && (
+          <View style={styles.uploadingIndicator}>
+            <ActivityIndicator size="small" color="#007AFF" />
+            <Text style={styles.uploadingText}>Uploading...</Text>
+          </View>
+        )}
+        <Text style={styles.name}>{client?.full_name}</Text>
+        <Text style={styles.subtitle}>ID: {client?.id_number}</Text>
+      </View>
 
-      {/* Personal Information section remains the same */}
+      {/* Personal Information section with improved address field */}
       <View style={styles.infoSection}>
         <Text style={styles.sectionTitle}>Personal Information</Text>
         <View style={styles.infoRow}>
@@ -201,6 +300,10 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
         <View style={styles.infoRow}>
           <Text style={styles.label}>Email:</Text>
           <Text style={styles.value}>{client?.email || 'N/A'}</Text>
+        </View>
+        <View style={styles.infoRow}>
+          <Text style={styles.label}>Address:</Text>
+          <Text style={styles.value}>{getClientAddress()}</Text>
         </View>
         <View style={styles.infoRow}>
           <Text style={styles.label}>Occupation:</Text>
@@ -268,16 +371,25 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
                 </Text>
               </View>
               
-              {calculateRepaymentProgress(loan) < 100 && loan.status === 'APPROVED' 
-              ? (
+              {loan.status === 'APPROVED' && (
+                <View style={styles.actionButtonsContainer}>
+                  {calculateRepaymentProgress(loan) < 100 && (
+                    <TouchableOpacity
+                      style={styles.repaymentButton}
+                      onPress={() => handleRepayment(loan)}
+                    >
+                      <Text style={styles.repaymentButtonText}>Record Payment</Text>
+                    </TouchableOpacity>
+                  )}
+                  
                   <TouchableOpacity
-                    style={styles.repaymentButton}
-                    onPress={() => handleRepayment(loan)}
+                    style={styles.summaryButton}
+                    onPress={() => handleLoanSummary(loan)}
                   >
-                    <Text style={styles.repaymentButtonText}>Record Payment</Text>
+                    <Text style={styles.summaryButtonText}>Loan Summary</Text>
                   </TouchableOpacity>
-                ) 
-                : null}
+                </View>
+              )}
             </View>
 
             <Text style={styles.loanDate}>
@@ -316,11 +428,49 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
+  profileImageContainer: {
+    position: 'relative',
+    marginBottom: 10,
+  },
+  profileImageWrapper: {
+    position: 'relative',
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    overflow: 'hidden',
+  },
   profileImage: {
     width: 100,
     height: 100,
     borderRadius: 50,
+  },
+  profileImagePlaceholder: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  editIconOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  uploadingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 10,
+  },
+  uploadingText: {
+    marginLeft: 8,
+    color: '#007AFF',
   },
   name: {
     fontSize: 24,
@@ -485,13 +635,32 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 4,
   },
+  actionButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
   repaymentButton: {
     backgroundColor: '#007AFF',
     padding: 8,
     borderRadius: 4,
+    flex: 1,
+    marginRight: 8,
     alignItems: 'center',
   },
   repaymentButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  summaryButton: {
+    backgroundColor: '#34C759',
+    padding: 8,
+    borderRadius: 4,
+    flex: 1,
+    marginLeft: 8,
+    alignItems: 'center',
+  },
+  summaryButtonText: {
     color: '#fff',
     fontSize: 14,
     fontWeight: '500',

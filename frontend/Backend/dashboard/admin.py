@@ -129,7 +129,7 @@ class LoanOfficerAdmin(admin.ModelAdmin):
 
 @admin.register(Customer)
 class CustomerAdmin(admin.ModelAdmin):
-    list_display = ('full_name', 'phone', 'loan_officer', 'created_at', 'get_total_borrowed')
+    list_display = ('full_name', 'phone', 'id_type', 'id_number', 'loan_officer', 'created_at', 'get_total_borrowed')
     search_fields = ('full_name', 'phone')
     list_filter = ['id_type', 'is_active']
 
@@ -147,6 +147,9 @@ class CustomerAdmin(admin.ModelAdmin):
         }),
         ('Contact Information', {
             'fields': ('phone', 'alternative_phone', 'address',),
+        }),
+        ('Identification', {  # New section for ID fields
+            'fields': ('id_type', 'id_number'),
         }),
         ('Financial Information', {
             'fields': ('occupation', 'monthly_income'),

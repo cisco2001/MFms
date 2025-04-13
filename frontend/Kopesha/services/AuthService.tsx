@@ -23,7 +23,7 @@ let inMemoryRefreshToken: string | null = null;
 let inMemoryUserData: UserData | null = null;
 
 export class AuthService {
-  private API_BASE_URL = 'http://192.168.100.23:8000';
+  private API_BASE_URL = 'http://192.168.183.10:8000/';
   private tokenExpiryTime: number | null = null;
   private refreshTokenExpiryTime: number | null = null;
   private refreshPromise: Promise<string> | null = null;

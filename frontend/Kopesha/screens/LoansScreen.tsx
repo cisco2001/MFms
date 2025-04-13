@@ -9,32 +9,30 @@ import {
   ScrollView,
   Platform,
   ActivityIndicator,
-  Image
+  Image,
+  SafeAreaView,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../contexts/AuthContext';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, Feather } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { Picker } from '@react-native-picker/picker';
 import Constants from 'expo-constants';
 import * as ImagePicker from 'expo-image-picker';
-import { submitLoanApplication } from '../services/api'; // Import the submitLoanApplication function
-// Define your navigation stack types
+import { submitLoanApplication } from '../services/api';
+import Sidebar from '../components/Sidebar'; // Import the Sidebar component
+
 type RootStackParamList = {
-  LoansScreen: { clientId: string }; // Add other screens if needed
+  LoansScreen: { clientId: string };
 };
 
-// Define the props for LoansScreen
 type LoansScreenProps = NativeStackScreenProps<RootStackParamList, 'LoansScreen'>;
 
-
 interface LoanFormData {
-  // Loan Details
   amount_requested: string;
   purpose: string;
   term_months: string;
-  
-  // Referee Details
+  interest_rate: string; // Added interest rate field
   referee_name: string;
   referee_phone: string;
   referee_email: string;
@@ -51,36 +49,16 @@ interface LoanFormData {
     latitude?: number;
     longitude?: number;
   };
-  
-  // Collateral Details
   collateral_type: string;
   collateral_description: string;
   collateral_photo: string | null;
-
-}
-interface ErrorWithMessage {
-  message: string;
-}
-function isErrorWithMessage(error: unknown): error is ErrorWithMessage {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'message' in error &&
-    typeof (error as Record<string, unknown>).message === 'string'
-  );
 }
 
-// Type guard for Constants.expoConfig
-function getApiUrl(): string {
-  if (!Constants.expoConfig?.extra?.apiUrl) {
-    throw new Error('API URL not configured in app.config');
-  }
-  return Constants.expoConfig.extra.apiUrl;
-}
 const INITIAL_FORM_DATA: LoanFormData = {
   amount_requested: '',
   purpose: '',
   term_months: '',
+  interest_rate: '', // Initialize interest rate field
   referee_name: '',
   referee_photo: null,
   referee_phone: '',
@@ -100,7 +78,7 @@ const INITIAL_FORM_DATA: LoanFormData = {
   collateral_photo: null,
 };
 
-const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
+const LoansScreen = ({ route, navigation }: LoansScreenProps) => {
   const { clientId } = route.params;
   const { token } = useAuth();
   const [currentStage, setCurrentStage] = useState(0);
@@ -108,23 +86,24 @@ const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
   const [useGeolocation, setUseGeolocation] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // State for sidebar
 
   const stages = ['Loan Details', 'Referee Information', 'Collateral Details'];
 
   const pickImage = async (field: 'referee_photo' | 'collateral_photo') => {
-      let result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-          aspect: [4, 3],
-          quality: 1,
-      });
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 1,
+    });
 
-      if (!result.canceled) {
-          setFormData(prev => ({
-              ...prev,
-              [field]: result.assets[0].uri,
-          }));
-      }
+    if (!result.canceled) {
+      setFormData(prev => ({
+        ...prev,
+        [field]: result.assets[0].uri,
+      }));
+    }
   };
 
   const handleLocationPick = async () => {
@@ -140,7 +119,6 @@ const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
         accuracy: Location.Accuracy.High,
       });
 
-      // Get address details from coordinates
       const [addressData] = await Location.reverseGeocodeAsync({
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
@@ -157,7 +135,7 @@ const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
           street_name: addressData.street || prev.referee_address.street_name,
         }
       }));
-      
+
       Alert.alert('Success', 'Location captured successfully');
     } catch (error) {
       Alert.alert('Error', 'Failed to get location');
@@ -179,6 +157,10 @@ const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
         }
         if (!formData.term_months) {
           Alert.alert('Error', 'Please enter the loan term');
+          return false;
+        }
+        if (!formData.interest_rate) {
+          Alert.alert('Error', 'Please enter the interest rate');
           return false;
         }
         return true;
@@ -233,25 +215,23 @@ const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
   const handleSubmit = async () => {
     try {
       setIsLoading(true);
-  
+
       const formDataToSend = new FormData();
-  
-      // Add loan application fields
+
       formDataToSend.append('amount_requested', formData.amount_requested);
       formDataToSend.append('purpose', formData.purpose);
       formDataToSend.append('term_months', formData.term_months);
+      formDataToSend.append('interest_rate', formData.interest_rate); // Add interest rate
       formDataToSend.append('customer', clientId);
       formDataToSend.append('status', 'PENDING');
-  
-      // Add referee data
+
       formDataToSend.append('referee[full_name]', formData.referee_name);
       formDataToSend.append('referee[phone]', formData.referee_phone);
       formDataToSend.append('referee[email]', formData.referee_email || '');
       formDataToSend.append('referee[relationship]', formData.referee_relationship);
       formDataToSend.append('referee[occupation]', formData.referee_occupation || '');
       formDataToSend.append('referee[workplace]', formData.referee_workplace || '');
-  
-      // Add referee address
+
       formDataToSend.append('referee[address][region]', formData.referee_address.region || '');
       formDataToSend.append('referee[address][district]', formData.referee_address.district || '');
       formDataToSend.append('referee[address][ward]', formData.referee_address.ward || '');
@@ -259,74 +239,42 @@ const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
       if (formData.referee_address.house_number) {
         formDataToSend.append('referee[address][house_number]', formData.referee_address.house_number);
       }
-  
-      // Log what we're about to upload for debugging
-      console.log('Preparing to upload referee photo:', formData.referee_photo ? 'Photo exists' : 'No photo');
-  
-      // Add referee photo (if available)
+
       if (formData.referee_photo) {
         const uriParts = formData.referee_photo.split('.');
         const fileType = uriParts[uriParts.length - 1];
-        
-        // Create a proper file object for React Native
         const photoFile = {
           uri: formData.referee_photo,
           name: `photo.${fileType}`,
           type: `image/${fileType}`
         };
-        
-        // @ts-ignore - TypeScript doesn't know about this structure but it works for React Native
+        // @ts-ignore
         formDataToSend.append('referee[photo]', photoFile);
-        console.log('Added referee photo to FormData');
       }
-  
-      // Add collateral data
+
       formDataToSend.append('collateral_type', formData.collateral_type);
       formDataToSend.append('collateral_description', formData.collateral_description);
-  
-      // Add collateral photo (if available)
+
       if (formData.collateral_photo) {
         const uriParts = formData.collateral_photo.split('.');
         const fileType = uriParts[uriParts.length - 1];
-        
-        // Create a proper file object for React Native
         const collateralFile = {
           uri: formData.collateral_photo,
           name: `collateral.${fileType}`,
           type: `image/${fileType}`
         };
-        
-        // @ts-ignore - TypeScript doesn't know about this structure but it works for React Native
+        // @ts-ignore
         formDataToSend.append('collateral_photo', collateralFile);
-        console.log('Added collateral photo to FormData');
       }
-  
-      try {
-        // Send the request to the backend
-        const response = await submitLoanApplication(formDataToSend, token);
-        if (!response) {
-          let errorMessage = 'Failed to submit loan application';
-          // Only try to parse JSON if we got a response
-          if (response) {
-            // Success: Handle the successful response
-            setIsSubmitted(true);
-            navigation.goBack();
-          } else {
-            // Handle unexpected response
-            throw new Error('Failed to submit loan application');
-          }
-          throw new Error(errorMessage);
-        }
-        navigation.goBack();
-      } catch (apiError) {
-        console.error('API call failed:', apiError);
-        throw apiError; // Re-throw to be caught by the outer catch
+
+      const response = await submitLoanApplication(formDataToSend, token);
+      if (!response) {
+        throw new Error('Failed to submit loan application');
       }
+      setIsSubmitted(true);
+      navigation.goBack();
     } catch (error) {
-      const errorMessage = isErrorWithMessage(error)
-        ? error.message
-        : 'Failed to submit loan application';
-      Alert.alert('Error', errorMessage);
+      Alert.alert('Error', 'Failed to submit loan application');
       console.error('Submit error:', error);
     } finally {
       setIsLoading(false);
@@ -387,6 +335,15 @@ const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
         keyboardType="numeric"
         placeholderTextColor="#666"
       />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Interest Rate (%)"
+        value={formData.interest_rate}
+        onChangeText={(text) => setFormData({ ...formData, interest_rate: text.replace(/[^0-9.]/g, '') })}
+        keyboardType="numeric"
+        placeholderTextColor="#666"
+      />
     </View>
   );
 
@@ -399,13 +356,12 @@ const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
         onChangeText={(text) => setFormData({ ...formData, referee_name: text })}
         placeholderTextColor="#666"
       />
-      <View>
-        {/* Existing fields... */}
-        <TouchableOpacity onPress={() => pickImage('referee_photo')}>
-            <Text>Upload Referee Photo</Text>
-        </TouchableOpacity>
-        {formData.referee_photo && <Image source={{ uri: formData.referee_photo }} style={{ width: 100, height: 100 }} />}
-      </View>
+
+      <TouchableOpacity style={styles.uploadButton} onPress={() => pickImage('referee_photo')}>
+        <Text style={styles.uploadButtonText}>Upload Referee Photo</Text>
+      </TouchableOpacity>
+      {formData.referee_photo && <Image source={{ uri: formData.referee_photo }} style={styles.uploadedImage} />}
+
       <TextInput
         style={styles.input}
         placeholder="Phone Number"
@@ -546,13 +502,11 @@ const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
           <Picker.Item label="Other" value="other" />
         </Picker>
       </View>
-      <View>
-        {/* Existing fields... */}
-        <TouchableOpacity onPress={() => pickImage('collateral_photo')}>
-            <Text>Upload Collateral Photo</Text>
-        </TouchableOpacity>
-        {formData.collateral_photo && <Image source={{ uri: formData.collateral_photo }} style={{ width: 100, height: 100 }} />}
-    </View>
+
+      <TouchableOpacity style={styles.uploadButton} onPress={() => pickImage('collateral_photo')}>
+        <Text style={styles.uploadButtonText}>Upload Collateral Photo</Text>
+      </TouchableOpacity>
+      {formData.collateral_photo && <Image source={{ uri: formData.collateral_photo }} style={styles.uploadedImage} />}
 
       <TextInput
         style={[styles.input, styles.textArea]}
@@ -567,7 +521,17 @@ const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
   );
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity 
+          style={styles.menuButton}
+          onPress={() => setIsSidebarOpen(true)}
+        >
+          <Feather name="menu" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Loans</Text>
+      </View>
+
       <ScrollView>
         {renderStageIndicator()}
 
@@ -578,13 +542,12 @@ const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
         </View>
       </ScrollView>
 
-       {/* Green Tick for Success */}
-    {isSubmitted && (
-      <View style={styles.successOverlay}>
-        <Ionicons name="checkmark-circle" size={100} color="#4CD964" />
-        <Text style={styles.successText}>Loan application submitted successfully!</Text>
-      </View>
-    )}
+      {isSubmitted && (
+        <View style={styles.successOverlay}>
+          <Ionicons name="checkmark-circle" size={100} color="#4CD964" />
+          <Text style={styles.successText}>Loan application submitted successfully!</Text>
+        </View>
+      )}
 
       <View style={styles.navigationButtons}>
         {currentStage > 0 && (
@@ -629,7 +592,12 @@ const LoansScreen = ({ route, navigation }:  LoansScreenProps) => {
           )}
         </TouchableOpacity>
       </View>
-    </View>
+
+      <Sidebar 
+        isOpen={isSidebarOpen} 
+        onClose={() => setIsSidebarOpen(false)} 
+      />
+    </SafeAreaView>
   );
 };
 
@@ -637,7 +605,21 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
-    paddingTop: Constants.statusBarHeight,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  menuButton: {
+    padding: 8,
   },
   stageIndicator: {
     flexDirection: 'row',
@@ -781,6 +763,24 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  uploadButton: {
+    backgroundColor: '#007AFF',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  uploadButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  uploadedImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
   navigationButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -839,7 +839,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)', // Semi-transparent white background
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
   },
   successText: {
     marginTop: 20,
