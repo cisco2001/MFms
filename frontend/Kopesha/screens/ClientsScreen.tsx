@@ -16,7 +16,7 @@ import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
 import Sidebar from '@/components/Sidebar';
-import { getClients, registerClient } from '@/services/api';
+import { getClients, registerClient as apiRegisterClient } from '@/services/api';
 
 // Define the Client type
 interface Client {
@@ -121,7 +121,7 @@ const ClientsScreen: React.FC = () => {
     }
   };
   
-  const registerClient = async () => {
+  const handleRegisterClient = async () => {
     if (!user?.id) {
       Alert.alert('Error', 'User information not available');
       return;
@@ -133,7 +133,7 @@ const ClientsScreen: React.FC = () => {
         loan_officer: user.id,
       };
   
-      const responseData = await registerClient(clientData, token);
+      const responseData = await apiRegisterClient(clientData, token);
       Alert.alert('Success', 'Client registered successfully');
       setModalVisible(false);
   
@@ -457,7 +457,7 @@ const ClientsScreen: React.FC = () => {
               
               <TouchableOpacity 
                 style={[styles.modalButton, styles.submitButton]}
-                onPress={registerClient}
+                onPress={handleRegisterClient}
               >
                 <Text style={styles.buttonText}>Register</Text>
               </TouchableOpacity>
