@@ -10,11 +10,16 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
+  useWindowDimensions,
+  Pressable,
+  Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
-import { Feather, MaterialIcons } from '@expo/vector-icons';
+import { Feather, MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import * as ImagePicker from 'expo-image-picker';
-import { getClientDetails, getLoanHistory } from '@/services/api';
+import { getClientDetails, getLoanHistory, updateClientDetails } from '@/services/api';
+
 interface LoanHistory {
   id: number;
   amount_requested: number;
@@ -24,7 +29,7 @@ interface LoanHistory {
   purpose: string;
   term_months: number;
   interest: number;
-  amount_paid?: number; // New field for tracking repayments
+  amount_paid?: number;
 }
 
 interface ClientProfileScreenProps {
@@ -39,16 +44,23 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
   const [loanHistory, setLoanHistory] = useState<LoanHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [updatedClientData, setUpdatedClientData] = useState<any>({});
+  const [activeTab, setActiveTab] = useState('loans'); // Changed from 'profile' to 'loans'
+  const { width, height } = useWindowDimensions();
   
+  // Determine if device is in landscape mode
+  const isLandscape = width > height;
+  // Determine if the device is a tablet (simple check based on screen size)
+  const isTablet = width > 768;
 
   const handleRepayment = (loan: LoanHistory) => {
     navigation.navigate('Revenue', {
       openForm: true,
       prefillData: {
         clientName: client?.full_name,
-        customerId: client?.id.toString(), // Pass the customer ID
-        customerName: client?.full_name,  // Pass the customer name
+        customerId: client?.id.toString(),
+        customerName: client?.full_name,
         loanId: loan.id.toString(),
         amount: '',
         paymentMethod: 'cash'
@@ -57,7 +69,6 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
   };
 
   const handleLoanSummary = (loan: LoanHistory) => {
-    // Use the same direct navigation approach as in handleRepayment
     navigation.navigate('LoanSummary', {
       loanId: loan.id,
       clientName: client?.full_name,
@@ -66,19 +77,16 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
   };
 
   const calculateRepaymentProgress = (loan: LoanHistory) => {
-    // Use amount_approved if available, otherwise fall back to amount_requested
     const principal = loan.amount_approved || 0;
     const interest = loan.interest || 0;
-    const totalAmount = +principal + +interest; // using unary operator to convert to number
+    const totalAmount = +principal + +interest;
     
-    // Handle case where total amount is 0 to avoid division by zero
     if (totalAmount <= 0) {
       return 0;
     }
   
     const amountPaid = loan.amount_paid || 0;
     
-    // Ensure percentage is between 0 and 100
     return (loan.status === 'APPROVED')? Math.min(Math.max((amountPaid / totalAmount) * 100, 0), 100) : 0;
   };
 
@@ -92,8 +100,15 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
         setClient(clientData);
         setLoanHistory(loanHistoryData);
         
-        // Debug: Log client data to see the actual field names and values
-        console.log('Client Data:', clientData);
+        // Initialize updatedClientData with existing client data
+        setUpdatedClientData({
+          full_name: clientData.full_name,
+          phone: clientData.phone,
+          email: clientData.email || '',
+          address: clientData.physical_address || clientData.location || clientData.address || '',
+          occupation: clientData.occupation || '',
+          monthly_income: clientData.monthly_income || '',
+        });
       } catch (error) {
         Alert.alert('Error', 'Failed to load data');
       } finally {
@@ -108,6 +123,16 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
     try {
       const clientData = await getClientDetails(clientId, token);
       setClient(clientData);
+      
+      // Update the form data as well
+      setUpdatedClientData({
+        full_name: clientData.full_name,
+        phone: clientData.phone,
+        email: clientData.email || '',
+        address: clientData.physical_address || clientData.location || clientData.address || '',
+        occupation: clientData.occupation || '',
+        monthly_income: clientData.monthly_income || '',
+      });
     } catch (error) {
       console.error('Error fetching client details:', error);
       Alert.alert('Error', 'Failed to update client data');
@@ -116,18 +141,15 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
 
   // Helper function to get the correct address field
   const getClientAddress = () => {
-    // Check for different potential address field names
     if (client?.physical_address) return client.physical_address;
     if (client?.location) return client.location;
     if (client?.street_address) return client.street_address;
     if (client?.residential_address) return client.residential_address;
     
-    // If address is a number or boolean, convert to string
     if (typeof client?.address === 'number' || typeof client?.address === 'boolean') {
       return 'Address information not available';
     }
     
-    // Return the address field or N/A if none exists
     return client?.address || 'N/A';
   };
 
@@ -182,7 +204,6 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
     try {
       setUploading(true);
       
-      // Create form data
       const formData = new FormData();
       formData.append('profile_picture', {
         uri,
@@ -190,7 +211,6 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
         name: 'profile_picture.jpg',
       } as any);
       
-      // Send the request
       const response = await fetch(`http://192.168.100.23:8000/api/customers/${clientId}/`, {
         method: 'PATCH',
         headers: {
@@ -205,12 +225,38 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
         throw new Error(errorData.detail || 'Failed to upload image');
       }
       
-      // Refresh client data to get the updated profile picture
       fetchClientDetails();
       Alert.alert('Success', 'Profile picture updated successfully');
     } catch (error) {
       console.error('Error uploading image:', error);
       Alert.alert('Error', error instanceof Error ? error.message : 'Failed to upload image');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleEditPersonalInfo = () => {
+    setEditModalVisible(true);
+  };
+
+  const handleUpdateClientInfo = async () => {
+    try {
+      setUploading(true);
+      
+      // Process monthly income to ensure it's a number
+      const formattedData = {
+        ...updatedClientData,
+        monthly_income: updatedClientData.monthly_income ? Number(updatedClientData.monthly_income) : undefined,
+      };
+      
+      await updateClientDetails(clientId, formattedData, token);
+      await fetchClientDetails();
+      
+      setEditModalVisible(false);
+      Alert.alert('Success', 'Personal information updated successfully');
+    } catch (error) {
+      console.error('Error updating client info:', error);
+      Alert.alert('Error', 'Failed to update personal information');
     } finally {
       setUploading(false);
     }
@@ -224,75 +270,20 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
     );
   }
 
-  return (
-    <ScrollView style={styles.container}>
-      {/* Header and Profile sections remain the same */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Feather name="arrow-left" size={24} color="#333" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Client Profile</Text>
-        <View style={{ width: 24 }} />
-      </View>
-
-      <View style={styles.profileSection}>
-        <TouchableOpacity 
-          style={styles.profileImageContainer}
-          onPress={() => {
-            Alert.alert(
-              'Update Profile Picture',
-              'Choose an option',
-              [
-                {
-                  text: 'Take Photo',
-                  onPress: takePicture
-                },
-                {
-                  text: 'Choose from Gallery',
-                  onPress: pickImage
-                },
-                {
-                  text: 'Cancel',
-                  style: 'cancel'
-                }
-              ]
-            );
-          }}
-        >
-          {client?.profile_picture ? (
-            <View style={styles.profileImageWrapper}>
-              <Image
-                source={{ uri: client.profile_picture }}
-                style={styles.profileImage}
-                onLoad={() => console.log(`Photo loaded successfully for client: ${client.full_name}`)}
-                onError={(error) => console.log(`Photo load error for client ${client.full_name}:`, error.nativeEvent.error)}
-              />
-              <View style={styles.editIconOverlay}>
-                <Feather name="edit-2" size={16} color="#fff" />
-              </View>
-            </View>
-          ) : (
-            <View style={styles.profileImagePlaceholder}>
-              <MaterialIcons name="person" size={60} color="#666" />
-              <View style={styles.editIconOverlay}>
-                <Feather name="edit-2" size={16} color="#fff" />
-              </View>
-            </View>
-          )}
-        </TouchableOpacity>
-        {uploading && (
-          <View style={styles.uploadingIndicator}>
-            <ActivityIndicator size="small" color="#007AFF" />
-            <Text style={styles.uploadingText}>Uploading...</Text>
-          </View>
-        )}
-        <Text style={styles.name}>{client?.full_name}</Text>
-        <Text style={styles.subtitle}>ID: {client?.id_number}</Text>
-      </View>
-
-      {/* Personal Information section with improved address field */}
-      <View style={styles.infoSection}>
-        <Text style={styles.sectionTitle}>Personal Information</Text>
+  // Content for the Profile tab
+  const ProfileContent = () => (
+    <>
+      <View style={[styles.infoSection, styles.cardShadow]}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>Personal Information</Text>
+          <TouchableOpacity 
+            style={styles.editButton}
+            onPress={handleEditPersonalInfo}
+          >
+            <Feather name="edit-2" size={18} color="#007AFF" />
+            <Text style={styles.editButtonText}>Edit</Text>
+          </TouchableOpacity>
+        </View>
         <View style={styles.infoRow}>
           <Text style={styles.label}>Phone:</Text>
           <Text style={styles.value}>{client?.phone}</Text>
@@ -317,27 +308,59 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
         </View>
       </View>
 
-      {/* Updated Loan History section */}
-      <View style={styles.loanHistorySection}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Loan History</Text>
+      <View style={[styles.infoSection, styles.cardShadow]}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>ID Information</Text>
+        </View>
+        <View style={styles.infoRow}>
+          <Text style={styles.label}>ID Number:</Text>
+          <Text style={styles.value}>{client?.id_number || 'N/A'}</Text>
+        </View>
+        <View style={styles.infoRow}>
+          <Text style={styles.label}>Customer ID:</Text>
+          <Text style={styles.value}>{client?.id || 'N/A'}</Text>
+        </View>
+      </View>
+    </>
+  );
+
+  // Content for the Loans tab
+  const LoansContent = () => (
+    <View style={styles.loanHistorySection}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Loan History</Text>
+        <TouchableOpacity
+          style={styles.newLoanButton}
+          onPress={() => navigation.navigate('NewLoan', { clientId: clientId })}
+        >
+          <Feather name="plus" size={16} color="#fff" style={styles.buttonIcon} />
+          <Text style={styles.newLoanButtonText}>New Loan</Text>
+        </TouchableOpacity>
+      </View>
+
+      {loanHistory.length === 0 ? (
+        <View style={styles.emptyStateContainer}>
+          <Feather name="credit-card" size={50} color="#ccc" />
+          <Text style={styles.emptyStateText}>No loan history yet</Text>
           <TouchableOpacity
-            style={styles.newLoanButton}
+            style={styles.emptyStateButton}
             onPress={() => navigation.navigate('NewLoan', { clientId: clientId })}
           >
-            <Text style={styles.newLoanButtonText}>New Loan</Text>
+            <Text style={styles.emptyStateButtonText}>Create First Loan</Text>
           </TouchableOpacity>
         </View>
-
-        {loanHistory.map((loan) => (
-          <View key={loan.id} style={styles.loanCard}>
+      ) : (
+        loanHistory.map((loan) => (
+          <View key={loan.id} style={[styles.loanCard, styles.cardShadow]}>
             <View style={styles.loanHeader}>
               <Text style={styles.loanAmount}>
                 TZS {loan.amount_approved ? loan.amount_approved.toLocaleString() : loan.amount_requested.toLocaleString()}
               </Text>
               <View style={[
                 styles.statusBadge,
-                { backgroundColor: loan.status === 'APPROVED' ? '#4CAF50' : '#FFC107' }
+                { backgroundColor: loan.status === 'APPROVED' ? '#4CAF50' : 
+                                   loan.status === 'PENDING' ? '#FFC107' : 
+                                   loan.status === 'REJECTED' ? '#FF3B30' : '#999' }
               ]}>
                 <Text style={styles.statusText}>{loan.status}</Text>
               </View>
@@ -352,7 +375,6 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
               )}
             </View>
 
-            {/* New Repayment Progress Section */}
             <View style={styles.repaymentSection}>
               <View style={styles.progressContainer}>
                 <View style={styles.progressBar}>
@@ -378,6 +400,7 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
                       style={styles.repaymentButton}
                       onPress={() => handleRepayment(loan)}
                     >
+                      <Feather name="dollar-sign" size={14} color="#fff" style={styles.buttonIcon} />
                       <Text style={styles.repaymentButtonText}>Record Payment</Text>
                     </TouchableOpacity>
                   )}
@@ -386,6 +409,7 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
                     style={styles.summaryButton}
                     onPress={() => handleLoanSummary(loan)}
                   >
+                    <Feather name="file-text" size={14} color="#fff" style={styles.buttonIcon} />
                     <Text style={styles.summaryButtonText}>Loan Summary</Text>
                   </TouchableOpacity>
                 </View>
@@ -393,19 +417,250 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
             </View>
 
             <Text style={styles.loanDate}>
-              {new Date(loan.created_at).toLocaleDateString()}
+              Created on {new Date(loan.created_at).toLocaleDateString()}
             </Text>
           </View>
-        ))}
+        ))
+      )}
+    </View>
+  );
+
+  return (
+    <View style={styles.container}>
+      {/* Modern header with drop shadow */}
+      <View style={[styles.header, styles.cardShadow]}>
+        <TouchableOpacity 
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Feather name="arrow-left" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Client Profile</Text>
+        <View style={{ width: 40 }} />
       </View>
-    </ScrollView>
+
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={{ flex: 1 }}
+      >
+        <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+          {/* Profile Section with Responsive Layout */}
+          <View style={[
+            styles.profileSection, 
+            isLandscape && !isTablet && styles.profileSectionLandscape,
+          ]}>
+            <TouchableOpacity 
+              style={styles.profileImageContainer}
+              onPress={() => {
+                Alert.alert(
+                  'Update Profile Picture',
+                  'Choose an option',
+                  [
+                    {
+                      text: 'Take Photo',
+                      onPress: takePicture
+                    },
+                    {
+                      text: 'Choose from Gallery',
+                      onPress: pickImage
+                    },
+                    {
+                      text: 'Cancel',
+                      style: 'cancel'
+                    }
+                  ]
+                );
+              }}
+            >
+              {client?.profile_picture ? (
+                <View style={styles.profileImageWrapper}>
+                  <Image
+                    source={{ uri: client.profile_picture }}
+                    style={styles.profileImage}
+                  />
+                  <View style={styles.editIconOverlay}>
+                    <Feather name="camera" size={16} color="#fff" />
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.profileImagePlaceholder}>
+                  <MaterialIcons name="person" size={60} color="#666" />
+                  <View style={styles.editIconOverlay}>
+                    <Feather name="camera" size={16} color="#fff" />
+                  </View>
+                </View>
+              )}
+              {uploading && (
+                <View style={styles.uploadingIndicator}>
+                  <ActivityIndicator size="small" color="#007AFF" />
+                  <Text style={styles.uploadingText}>Uploading...</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            
+            <View style={styles.profileTextContainer}>
+              <Text style={styles.name}>{client?.full_name}</Text>
+              <View style={styles.idContainer}>
+                <Feather name="credit-card" size={14} color="#666" />
+                <Text style={styles.subtitle}>ID: {client?.id_number}</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Modern Tab Navigation - Reordered tabs to put Loans first */}
+          <View style={styles.tabContainer}>
+            <TouchableOpacity 
+              style={[styles.tab, activeTab === 'loans' && styles.activeTab]}
+              onPress={() => setActiveTab('loans')}
+            >
+              <Feather 
+                name="dollar-sign" 
+                size={18} 
+                color={activeTab === 'loans' ? "#007AFF" : "#666"} 
+              />
+              <Text style={[
+                styles.tabText, 
+                activeTab === 'loans' && styles.activeTabText
+              ]}>
+                Loans
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.tab, activeTab === 'profile' && styles.activeTab]}
+              onPress={() => setActiveTab('profile')}
+            >
+              <Feather 
+                name="user" 
+                size={18} 
+                color={activeTab === 'profile' ? "#007AFF" : "#666"} 
+              />
+              <Text style={[
+                styles.tabText, 
+                activeTab === 'profile' && styles.activeTabText
+              ]}>
+                Profile
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Content based on active tab */}
+          <View style={styles.tabContent}>
+            {activeTab === 'profile' ? <ProfileContent /> : <LoansContent />}
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      {/* Edit Personal Information Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={editModalVisible}
+        onRequestClose={() => {
+          setEditModalVisible(false);
+        }}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={{ flex: 1 }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Edit Personal Information</Text>
+                <Pressable onPress={() => setEditModalVisible(false)}>
+                  <Ionicons name="close" size={24} color="#333" />
+                </Pressable>
+              </View>
+              
+              <ScrollView style={styles.modalScrollView}>
+                <Text style={styles.inputLabel}>Full Name</Text>
+                <TextInput
+                  style={styles.input}
+                  value={updatedClientData.full_name}
+                  onChangeText={(text) => setUpdatedClientData({...updatedClientData, full_name: text})}
+                  placeholder="Full Name"
+                />
+                
+                <Text style={styles.inputLabel}>Phone Number</Text>
+                <TextInput
+                  style={styles.input}
+                  value={updatedClientData.phone}
+                  onChangeText={(text) => setUpdatedClientData({...updatedClientData, phone: text})}
+                  placeholder="Phone Number"
+                  keyboardType="phone-pad"
+                />
+                
+                <Text style={styles.inputLabel}>Email Address</Text>
+                <TextInput
+                  style={styles.input}
+                  value={updatedClientData.email}
+                  onChangeText={(text) => setUpdatedClientData({...updatedClientData, email: text})}
+                  placeholder="Email Address"
+                  keyboardType="email-address"
+                />
+                
+                <Text style={styles.inputLabel}>Physical Address</Text>
+                <TextInput
+                  style={styles.input}
+                  value={updatedClientData.address}
+                  onChangeText={(text) => setUpdatedClientData({...updatedClientData, address: text})}
+                  placeholder="Physical Address"
+                />
+                
+                <Text style={styles.inputLabel}>Occupation</Text>
+                <TextInput
+                  style={styles.input}
+                  value={updatedClientData.occupation}
+                  onChangeText={(text) => setUpdatedClientData({...updatedClientData, occupation: text})}
+                  placeholder="Occupation"
+                />
+                
+                <Text style={styles.inputLabel}>Monthly Income (TZS)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={updatedClientData.monthly_income ? updatedClientData.monthly_income.toString() : ''}
+                  onChangeText={(text) => setUpdatedClientData({...updatedClientData, monthly_income: text})}
+                  placeholder="Monthly Income"
+                  keyboardType="numeric"
+                />
+              </ScrollView>
+              
+              <View style={styles.modalFooter}>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.cancelButton]}
+                  onPress={() => setEditModalVisible(false)}
+                >
+                  <Text style={styles.buttonText}>Cancel</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.saveButton]}
+                  onPress={handleUpdateClientInfo}
+                  disabled={uploading}
+                >
+                  {uploading ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.buttonText}>Save Changes</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#f8f9fa',
+  },
+  scrollContainer: {
+    flex: 1,
   },
   loadingContainer: {
     flex: 1,
@@ -416,96 +671,191 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: '#fff',
+    zIndex: 10,
+  },
+  backButton: {
+    padding: 8,
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: 'bold',
+    fontWeight: '600',
+    color: '#333',
   },
   profileSection: {
+    flexDirection: 'column',
     alignItems: 'center',
     padding: 20,
+    backgroundColor: '#fff',
+    marginBottom: 10,
+  },
+  profileSectionLandscape: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingHorizontal: 30,
   },
   profileImageContainer: {
     position: 'relative',
-    marginBottom: 10,
+    marginBottom: 15,
+    alignItems: 'center',
+  },
+  profileTextContainer: {
+    marginLeft: 20,
+    alignItems: 'center',
   },
   profileImageWrapper: {
     position: 'relative',
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 110,
+    height: 110,
+    borderRadius: 55,
     overflow: 'hidden',
+    borderWidth: 3,
+    borderColor: '#f0f0f0',
   },
   profileImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 110,
+    height: 110,
+    borderRadius: 55,
   },
   profileImagePlaceholder: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 110,
+    height: 110,
+    borderRadius: 55,
     backgroundColor: '#f0f0f0',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#e0e0e0',
   },
   editIconOverlay: {
     position: 'absolute',
     bottom: 0,
     right: 0,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    backgroundColor: 'rgba(0,122,255,0.8)',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
   },
   uploadingIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    marginTop: 10,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    padding: 6,
+    borderRadius: 12,
   },
   uploadingText: {
     marginLeft: 8,
     color: '#007AFF',
+    fontWeight: '500',
   },
   name: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
     marginBottom: 5,
+    color: '#333',
+    textAlign: 'center',
+  },
+  idContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   subtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginLeft: 4,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    marginBottom: 10,
+    paddingHorizontal: 20,
+  },
+  tab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    marginRight: 10,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  activeTab: {
+    borderBottomColor: '#007AFF',
+  },
+  tabText: {
+    marginLeft: 8,
     fontSize: 16,
     color: '#666',
   },
+  activeTabText: {
+    color: '#007AFF',
+    fontWeight: '500',
+  },
+  tabContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 30,
+  },
   infoSection: {
-    padding: 20,
+    padding: 15,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+    paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: '#f0f0f0',
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 15,
+    fontWeight: '600',
+    color: '#333',
+  },
+  editButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f8ff',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  editButtonText: {
+    color: '#007AFF',
+    fontWeight: '500',
+    marginLeft: 4,
   },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f5f5f5',
   },
   label: {
     color: '#666',
+    fontSize: 15,
     flex: 1,
   },
   value: {
     flex: 2,
     textAlign: 'right',
+    fontWeight: '500',
+    color: '#333',
+    fontSize: 15,
   },
   loanHistorySection: {
-    padding: 20,
+    flex: 1,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -515,19 +865,24 @@ const styles = StyleSheet.create({
   },
   newLoanButton: {
     backgroundColor: '#007AFF',
-    paddingHorizontal: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
   },
   newLoanButtonText: {
     color: '#fff',
-    fontWeight: '500',
+    fontWeight: '600',
+  },
+  buttonIcon: {
+    marginRight: 6,
   },
   loanCard: {
-    backgroundColor: '#f8f9fa',
+    backgroundColor: '#fff',
     padding: 15,
-    borderRadius: 10,
-    marginBottom: 10,
+    borderRadius: 12,
+    marginBottom: 12,
   },
   loanHeader: {
     flexDirection: 'row',
@@ -538,25 +893,27 @@ const styles = StyleSheet.create({
   loanAmount: {
     fontSize: 18,
     fontWeight: 'bold',
+    color: '#333',
   },
   statusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 15,
+    borderRadius: 20,
   },
   statusText: {
     color: '#fff',
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   loanPurpose: {
     color: '#666',
     marginBottom: 10,
+    fontSize: 14,
   },
   loanDetails: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 5,
+    marginBottom: 8,
   },
   loanDetail: {
     fontSize: 13,
@@ -565,56 +922,13 @@ const styles = StyleSheet.create({
   loanDate: {
     fontSize: 12,
     color: '#999',
-  },
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    margin: 20,
-    padding: 20,
-    borderRadius: 12,
-    elevation: 5,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 16,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: 16,
-  },
-  modalButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-    marginLeft: 12,
-  },
-  cancelButton: {
-    backgroundColor: '#ff3b30',
-  },
-  submitButton: {
-    backgroundColor: '#007AFF',
-  },
-  buttonText: {
-    color: '#fff',
-    fontWeight: '500',
+    marginTop: 8,
+    textAlign: 'right',
   },
   repaymentSection: {
     marginTop: 10,
     padding: 10,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f5f7fa',
     borderRadius: 8,
   },
   progressContainer: {
@@ -642,28 +956,148 @@ const styles = StyleSheet.create({
   repaymentButton: {
     backgroundColor: '#007AFF',
     padding: 8,
-    borderRadius: 4,
+    borderRadius: 8,
     flex: 1,
     marginRight: 8,
     alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
   },
   repaymentButtonText: {
     color: '#fff',
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 13,
+    fontWeight: '600',
   },
   summaryButton: {
     backgroundColor: '#34C759',
     padding: 8,
-    borderRadius: 4,
+    borderRadius: 8,
     flex: 1,
     marginLeft: 8,
     alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
   },
   summaryButtonText: {
     color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  cardShadow: {
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3.84,
+    elevation: 3,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingVertical: 20,
+    maxHeight: '90%',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -3 },
+        shadowOpacity: 0.1,
+        shadowRadius: 6,
+      },
+      android: {
+        elevation: 5,
+      },
+    }),
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  modalScrollView: {
+    padding: 20,
+    maxHeight: '70%',
+  },
+  inputLabel: {
     fontSize: 14,
+    color: '#666',
+    marginBottom: 6,
     fontWeight: '500',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    backgroundColor: '#f9f9f9',
+    fontSize: 16,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  modalButton: {
+    paddingVertical: 12,
+    borderRadius: 8,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButton: {
+    backgroundColor: '#f2f2f2',
+    marginRight: 8,
+  },
+  saveButton: {
+    backgroundColor: '#007AFF',
+    marginLeft: 8,
+  },
+  buttonText: {
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  emptyStateContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 30,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+  },
+  emptyStateText: {
+    fontSize: 16,
+    color: '#666',
+    marginTop: 10,
+    marginBottom: 20,
+  },
+  emptyStateButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  emptyStateButtonText: {
+    color: '#fff',
+    fontWeight: '600',
   },
 });
 
