@@ -46,12 +46,10 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
   const [uploading, setUploading] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [updatedClientData, setUpdatedClientData] = useState<any>({});
-  const [activeTab, setActiveTab] = useState('loans'); // Changed from 'profile' to 'loans'
+  const [activeTab, setActiveTab] = useState('loans');
   const { width, height } = useWindowDimensions();
   
-  // Determine if device is in landscape mode
   const isLandscape = width > height;
-  // Determine if the device is a tablet (simple check based on screen size)
   const isTablet = width > 768;
 
   const handleRepayment = (loan: LoanHistory) => {
@@ -87,7 +85,7 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
   
     const amountPaid = loan.amount_paid || 0;
     
-    return (loan.status === 'APPROVED')? Math.min(Math.max((amountPaid / totalAmount) * 100, 0), 100) : 0;
+    return (loan.status === 'APPROVED') ? Math.min(Math.max((amountPaid / totalAmount) * 100, 0), 100) : 0;
   };
 
   useEffect(() => {
@@ -97,39 +95,58 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
           getClientDetails(clientId, token),
           getLoanHistory(clientId, token),
         ]);
+        
+        console.log('Fetched client data:', clientData); // Debug log
+        
         setClient(clientData);
         setLoanHistory(loanHistoryData);
         
-        // Initialize updatedClientData with existing client data
         setUpdatedClientData({
           full_name: clientData.full_name,
           phone: clientData.phone,
           email: clientData.email || '',
-          address: clientData.physical_address || clientData.location || clientData.address || '',
+          address: clientData.address ? {
+            street_name: clientData.address.street_name || '',
+            ward: clientData.address.ward || '',
+            // Keep other fields but don't display/edit them
+            region: clientData.address.region || '',
+            district: clientData.address.district || '',
+            house_number: clientData.address.house_number || '',
+            additional_details: clientData.address.additional_details || ''
+          } : null,
           occupation: clientData.occupation || '',
           monthly_income: clientData.monthly_income || '',
         });
       } catch (error) {
+        console.error('Error fetching data:', error);
         Alert.alert('Error', 'Failed to load data');
       } finally {
         setLoading(false);
       }
     };
-  
+
     fetchData();
   }, [clientId, token]);
 
   const fetchClientDetails = async () => {
     try {
       const clientData = await getClientDetails(clientId, token);
+      console.log('Fetched client data:', clientData);
+      
       setClient(clientData);
       
-      // Update the form data as well
       setUpdatedClientData({
         full_name: clientData.full_name,
         phone: clientData.phone,
         email: clientData.email || '',
-        address: clientData.physical_address || clientData.location || clientData.address || '',
+        address: clientData.address ? {
+          street_name: clientData.address.street_name || '',
+          ward: clientData.address.ward || '',
+          region: clientData.address.region || '',
+          district: clientData.address.district || '',
+          house_number: clientData.address.house_number || '',
+          additional_details: clientData.address.additional_details || ''
+        } : null,
         occupation: clientData.occupation || '',
         monthly_income: clientData.monthly_income || '',
       });
@@ -139,18 +156,16 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
     }
   };
 
-  // Helper function to get the correct address field
   const getClientAddress = () => {
-    if (client?.physical_address) return client.physical_address;
-    if (client?.location) return client.location;
-    if (client?.street_address) return client.street_address;
-    if (client?.residential_address) return client.residential_address;
+    if (!client?.address) return 'N/A';
     
-    if (typeof client?.address === 'number' || typeof client?.address === 'boolean') {
-      return 'Address information not available';
-    }
+    const { ward, street_name } = client.address;
+    const parts = [];
     
-    return client?.address || 'N/A';
+    if (street_name) parts.push(street_name);
+    if (ward) parts.push(ward);
+    
+    return parts.join(', ') || 'N/A';
   };
 
   const pickImage = async () => {
@@ -243,10 +258,19 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
     try {
       setUploading(true);
       
-      // Process monthly income to ensure it's a number
       const formattedData = {
         ...updatedClientData,
-        monthly_income: updatedClientData.monthly_income ? Number(updatedClientData.monthly_income) : undefined,
+        monthly_income: updatedClientData.monthly_income ? 
+          Number(updatedClientData.monthly_income) : undefined,
+        address: updatedClientData.address ? {
+          street_name: updatedClientData.address.street_name,
+          ward: updatedClientData.address.ward,
+          // Keep other fields unchanged
+          region: client?.address?.region || '',
+          district: client?.address?.district || '',
+          house_number: client?.address?.house_number || '',
+          additional_details: client?.address?.additional_details || ''
+        } : null
       };
       
       await updateClientDetails(clientId, formattedData, token);
@@ -270,7 +294,6 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
     );
   }
 
-  // Content for the Profile tab
   const ProfileContent = () => (
     <>
       <View style={[styles.infoSection, styles.cardShadow]}>
@@ -324,7 +347,6 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
     </>
   );
 
-  // Content for the Loans tab
   const LoansContent = () => (
     <View style={styles.loanHistorySection}>
       <View style={styles.sectionHeader}>
@@ -427,7 +449,6 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
 
   return (
     <View style={styles.container}>
-      {/* Modern header with drop shadow */}
       <View style={[styles.header, styles.cardShadow]}>
         <TouchableOpacity 
           style={styles.backButton}
@@ -444,7 +465,6 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
         style={{ flex: 1 }}
       >
         <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
-          {/* Profile Section with Responsive Layout */}
           <View style={[
             styles.profileSection, 
             isLandscape && !isTablet && styles.profileSectionLandscape,
@@ -507,7 +527,6 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
             </View>
           </View>
 
-          {/* Modern Tab Navigation - Reordered tabs to put Loans first */}
           <View style={styles.tabContainer}>
             <TouchableOpacity 
               style={[styles.tab, activeTab === 'loans' && styles.activeTab]}
@@ -544,14 +563,12 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
             </TouchableOpacity>
           </View>
 
-          {/* Content based on active tab */}
           <View style={styles.tabContent}>
             {activeTab === 'profile' ? <ProfileContent /> : <LoansContent />}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Edit Personal Information Modal */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -600,13 +617,31 @@ const ClientProfileScreen: React.FC<ClientProfileScreenProps> = ({ route, naviga
                   keyboardType="email-address"
                 />
                 
-                <Text style={styles.inputLabel}>Physical Address</Text>
-                <TextInput
-                  style={styles.input}
-                  value={updatedClientData.address}
-                  onChangeText={(text) => setUpdatedClientData({...updatedClientData, address: text})}
-                  placeholder="Physical Address"
-                />
+                {updatedClientData.address && (
+                  <>
+                    <Text style={styles.inputLabel}>Street Name</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={updatedClientData.address.street_name}
+                      onChangeText={(text) => setUpdatedClientData({
+                        ...updatedClientData,
+                        address: {...updatedClientData.address, street_name: text}
+                      })}
+                      placeholder="Street Name"
+                    />
+
+                    <Text style={styles.inputLabel}>Ward</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={updatedClientData.address.ward}
+                      onChangeText={(text) => setUpdatedClientData({
+                        ...updatedClientData,
+                        address: {...updatedClientData.address, ward: text}
+                      })}
+                      placeholder="Ward"
+                    />
+                  </>
+                )}
                 
                 <Text style={styles.inputLabel}>Occupation</Text>
                 <TextInput
